@@ -19,12 +19,14 @@ export class DocxParserController {
 
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
+        const allTexts = this.docxParserService.getAllParagraphTexts(domResult.paragraphs);
 
         return {
-            message: 'Parse XML thành DOM thành công!',
+            message: 'Trích xuất Text thành công!',
             fileName: file.originalname,
-            xmlLength: rawXml.length,
-            totalParagraphs: domResult.paragraphCount
+            totalParagraphs: domResult.paragraphCount,
+            nonEmptyParagraphs: allTexts.length,
+            sampleTexts: allTexts.slice(0, 15)
         };
     }
 }
