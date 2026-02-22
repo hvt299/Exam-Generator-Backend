@@ -134,6 +134,68 @@ export class DocxParserService {
         return classifiedLines;
     }
 
+    private getCorrectAnswerIndices(pNode: any, answerParts: string[]): number[] {
+        const correctIndices: number[] = [];
+        const rNodes = pNode.getElementsByTagName('w:r');
+
+        let currentText = '';
+        const correctCharIndices = new Set<number>();
+
+        for (let i = 0; i < rNodes.length; i++) {
+            const rNode = rNodes.item(i);
+            const rPr = rNode.getElementsByTagName('w:rPr')[0];
+            let isFormattedAsCorrect = false;
+
+            if (rPr) {
+                const xmlStr = new XMLSerializer().serializeToString(rPr).toLowerCase();
+                const hasCorrectColor = /w:val="(ff0000|c00000|ee0000|red|00b050|green|008000|blue|0070c0|0000ff)"/i.test(xmlStr);
+                const isUnderlined = xmlStr.includes('<w:u ');
+
+                if (hasCorrectColor || isUnderlined) {
+                    isFormattedAsCorrect = true;
+                }
+            }
+
+            const tNodes = rNode.getElementsByTagName('w:t');
+            for (let j = 0; j < tNodes.length; j++) {
+                const text = tNodes.item(j).textContent || '';
+                if (isFormattedAsCorrect) {
+                    for (let k = 0; k < text.length; k++) {
+                        if (text[k].trim().length > 0) {
+                            correctCharIndices.add(currentText.length + k);
+                        }
+                    }
+                }
+                currentText += text;
+            }
+        }
+
+        let searchStartIndex = 0;
+        for (let i = 0; i < answerParts.length; i++) {
+            const part = answerParts[i];
+            const partIndex = currentText.indexOf(part, searchStartIndex);
+
+            if (partIndex !== -1) {
+                const partEnd = partIndex + part.length;
+                let isPartCorrect = false;
+
+                for (let c = partIndex; c < partEnd; c++) {
+                    if (correctCharIndices.has(c)) {
+                        isPartCorrect = true;
+                        break;
+                    }
+                }
+
+                if (isPartCorrect) {
+                    correctIndices.push(i);
+                }
+                searchStartIndex = partEnd;
+            }
+        }
+
+        return correctIndices;
+    }
+
     buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any): Question[] {
         const questions: Question[] = [];
         let currentGroup = '<g3#1>';
@@ -161,9 +223,7 @@ export class DocxParserService {
                 if (!currentQuestion) throw new BadRequestException(`Lỗi: ${line.text}`);
 
                 const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
-
-                const xmlStr = new XMLSerializer().serializeToString(line.node).toLowerCase();
-                const nodeHasRedOrUnderline = xmlStr.includes('w:val="ff0000"') || xmlStr.includes('w:val="red"') || xmlStr.includes('<w:u ');
+                const correctIndices = this.getCorrectAnswerIndices(line.node, answerParts);
 
                 for (let j = 0; j < answerParts.length; j++) {
                     const part = answerParts[j];
@@ -171,13 +231,12 @@ export class DocxParserService {
                     const isPinned = trimmed.startsWith('#');
                     const charMatch = trimmed.match(/#?([A-D])\./);
                     const char = charMatch ? charMatch[1] : '';
-                    const isCorrect = (answerParts.length === 1 && nodeHasRedOrUnderline);
 
                     currentQuestion.answers.push({
                         char, text: trimmed, isPinned,
                         originalNode: line.node,
                         originalIndex: currentQuestion.answers.length,
-                        isCorrect
+                        isCorrect: correctIndices.includes(j)
                     });
                 }
             }
