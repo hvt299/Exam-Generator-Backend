@@ -23,9 +23,9 @@ export class DocxParserController {
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
         const classifiedLines = this.docxParserService.classifyParagraphs(domResult.paragraphs);
-        const baseQuestions = this.docxParserService.buildQuestionBlocks(classifiedLines);
+        const baseQuestions = this.docxParserService.buildQuestionBlocks(classifiedLines, domResult.docDom);
         const mixedVariant = this.docxParserService.generateExamVariant(baseQuestions);
-        const finalBuffer = this.docxParserService.buildFinalDocx(file.buffer, domResult.docDom, domResult.paragraphs, mixedVariant);
+        const finalBuffer = this.docxParserService.buildFinalDocx(file.buffer, domResult.docDom, classifiedLines, mixedVariant);
 
         res.send(finalBuffer);
     }

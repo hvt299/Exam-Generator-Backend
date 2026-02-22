@@ -1,7 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import AdmZip from 'adm-zip';
-import { DOMParser } from '@xmldom/xmldom';
-import { XMLSerializer } from '@xmldom/xmldom';
+import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 
 export enum LineType {
     TAG = 'TAG',
@@ -29,6 +28,7 @@ export interface Answer {
     text: string;
     isPinned: boolean;
     originalNode: any;
+    originalIndex: number;
 }
 
 export interface Question {
@@ -51,9 +51,7 @@ export class DocxParserService {
                 throw new BadRequestException('File DOCX không hợp lệ: Không tìm thấy word/document.xml');
             }
 
-            const xmlString = docXmlEntry.getData().toString('utf8');
-            return xmlString;
-
+            return docXmlEntry.getData().toString('utf8');
         } catch (error) {
             throw new BadRequestException(`Lỗi khi đọc file DOCX: ${error.message}`);
         }
@@ -85,7 +83,6 @@ export class DocxParserService {
                 text += tNode.textContent;
             }
         }
-
         return text;
     }
 
@@ -110,18 +107,18 @@ export class DocxParserService {
             const text = this.extractTextFromParagraph(pNode);
             const trimmedText = text.trim();
 
-            if (trimmedText.length === 0) continue;
-
             let type = LineType.TEXT;
 
-            if (REGEX_RULES.TAG.test(text)) {
-                type = LineType.TAG;
-            } else if (REGEX_RULES.QUESTION.test(text)) {
-                type = LineType.QUESTION;
-            } else if (REGEX_RULES.ANSWER_MCQ.test(text)) {
-                type = LineType.ANSWER_MCQ;
-            } else if (REGEX_RULES.ANSWER_TF.test(text)) {
-                type = LineType.ANSWER_TF;
+            if (trimmedText.length > 0) {
+                if (REGEX_RULES.TAG.test(text)) {
+                    type = LineType.TAG;
+                } else if (REGEX_RULES.QUESTION.test(text)) {
+                    type = LineType.QUESTION;
+                } else if (REGEX_RULES.ANSWER_MCQ.test(text)) {
+                    type = LineType.ANSWER_MCQ;
+                } else if (REGEX_RULES.ANSWER_TF.test(text)) {
+                    type = LineType.ANSWER_TF;
+                }
             }
 
             classifiedLines.push({
@@ -134,7 +131,7 @@ export class DocxParserService {
         return classifiedLines;
     }
 
-    buildQuestionBlocks(classifiedLines: ClassifiedLine[]): Question[] {
+    buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any): Question[] {
         const questions: Question[] = [];
         let currentGroup = '<g3#1>';
         let currentQuestion: Question | null = null;
@@ -150,7 +147,6 @@ export class DocxParserService {
                     this.validateQuestion(currentQuestion);
                     questions.push(currentQuestion);
                 }
-
                 currentQuestion = {
                     questionText: line.text.trim(),
                     questionNodes: [line.node],
@@ -159,24 +155,21 @@ export class DocxParserService {
                 };
             }
             else if (line.type === LineType.ANSWER_MCQ) {
-                if (!currentQuestion) {
-                    throw new BadRequestException(`Lỗi nghiêm trọng: Tìm thấy đáp án nhưng không thuộc câu hỏi nào.\nNội dung: "${line.text.trim()}"`);
-                }
+                if (!currentQuestion) throw new BadRequestException(`Lỗi: ${line.text}`);
 
                 const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
 
-                for (const part of answerParts) {
+                for (let j = 0; j < answerParts.length; j++) {
+                    const part = answerParts[j];
                     const trimmed = part.trim();
                     const isPinned = trimmed.startsWith('#');
-
                     const charMatch = trimmed.match(/#?([A-D])\./);
                     const char = charMatch ? charMatch[1] : '';
 
                     currentQuestion.answers.push({
-                        char,
-                        text: trimmed,
-                        isPinned,
-                        originalNode: line.node
+                        char, text: trimmed, isPinned,
+                        originalNode: line.node,
+                        originalIndex: currentQuestion.answers.length
                     });
                 }
             }
@@ -184,31 +177,73 @@ export class DocxParserService {
                 if (currentQuestion && currentQuestion.answers.length === 0) {
                     currentQuestion.questionText += '\n' + line.text.trim();
                     currentQuestion.questionNodes.push(line.node);
-                } else if (currentQuestion && currentQuestion.answers.length > 0) {
                 }
             }
         }
-
         if (currentQuestion) {
             this.validateQuestion(currentQuestion);
             questions.push(currentQuestion);
         }
-
         return questions;
     }
 
-    private validateQuestion(q: Question) {
-        if (q.answers.length === 0) {
-            return;
-        }
+    private updateLabel(pNode: any, regex: RegExp, newLabel: string) {
+        const ts = pNode.getElementsByTagName('w:t');
+        let fullText = '';
+        for (let i = 0; i < ts.length; i++) fullText += ts.item(i).textContent || '';
 
+        const match = fullText.match(regex);
+        if (!match || match.index === undefined) return;
+
+        const matchStart = match.index;
+        const matchEnd = matchStart + match[0].length;
+        let currentPos = 0;
+        let replaced = false;
+
+        for (let i = 0; i < ts.length; i++) {
+            const tNode = ts.item(i);
+            const text = tNode.textContent || '';
+            const nodeStart = currentPos;
+            const nodeEnd = currentPos + text.length;
+
+            if (nodeEnd <= matchStart || nodeStart >= matchEnd) {
+                currentPos = nodeEnd; continue;
+            }
+
+            if (!replaced) {
+                const beforeMatch = nodeStart < matchStart ? text.substring(0, matchStart - nodeStart) : '';
+                const afterMatch = nodeEnd > matchEnd ? text.substring(matchEnd - nodeStart) : '';
+                tNode.textContent = beforeMatch + newLabel + afterMatch;
+                replaced = true;
+            } else {
+                const afterMatch = nodeEnd > matchEnd ? text.substring(matchEnd - nodeStart) : '';
+                tNode.textContent = afterMatch;
+            }
+            currentPos = nodeEnd;
+        }
+    }
+
+    private removeRedColorAndUnderline(pNode: any) {
+        const colors = pNode.getElementsByTagName('w:color');
+        for (let i = colors.length - 1; i >= 0; i--) {
+            const colorNode = colors.item(i);
+            if (colorNode.parentNode) colorNode.parentNode.removeChild(colorNode);
+        }
+        const underlines = pNode.getElementsByTagName('w:u');
+        for (let i = underlines.length - 1; i >= 0; i--) {
+            const uNode = underlines.item(i);
+            if (uNode.parentNode) uNode.parentNode.removeChild(uNode);
+        }
+    }
+
+    private validateQuestion(q: Question) {
+        if (q.answers.length === 0) return;
         const chars = q.answers.map(a => a.char);
         const uniqueChars = new Set(chars);
 
         if (chars.length !== uniqueChars.size) {
             throw new BadRequestException(`Lỗi tại "${q.questionText}".\nCó đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A.).`);
         }
-
         if (q.answers.length !== 4) {
             throw new BadRequestException(`Lỗi tại "${q.questionText}".\nTìm thấy ${q.answers.length} đáp án thay vì 4. Vui lòng kiểm tra lại định dạng A., B., C., D.`);
         }
@@ -255,7 +290,6 @@ export class DocxParserService {
 
         for (const groupTag of groupOrder) {
             let groupQs = [...groupedQuestions[groupTag]];
-
             const match = groupTag.match(/<g([0-3])(?:#([1-3]))?>/i);
             const gRule = match ? parseInt(match[1], 10) : 0;
 
@@ -265,11 +299,9 @@ export class DocxParserService {
 
             for (const q of groupQs) {
                 const clonedQuestion: Question = { ...q, answers: [...q.answers] };
-
                 if (gRule === 2 || gRule === 3) {
                     clonedQuestion.answers = this.shuffleAnswersWithPins(clonedQuestion.answers);
                 }
-
                 mixedExam.push(clonedQuestion);
             }
         }
@@ -277,77 +309,65 @@ export class DocxParserService {
         return mixedExam;
     }
 
-    private splitInlineAnswersNode(docDom: any, originalPNode: any): any[] {
-        const childNodes = originalPNode.childNodes;
-        const resultNodes: Element[] = [];
-        let currentNewP = docDom.createElement('w:p');
-
-        const pPr = originalPNode.getElementsByTagName('w:pPr')[0];
-        if (pPr) currentNewP.appendChild(pPr.cloneNode(true));
-
-        for (let i = 0; i < childNodes.length; i++) {
-            const child = childNodes.item(i);
-
-            if (child.nodeName === 'w:r') {
-                const textNodes = child.getElementsByTagName('w:t');
-                let textContent = '';
-                for (let j = 0; j < textNodes.length; j++) {
-                    textContent += textNodes.item(j).textContent;
-                }
-
-                if (/(?=\s*#?[A-D]\.)/i.test(textContent) && currentNewP.childNodes.length > (pPr ? 1 : 0)) {
-                    resultNodes.push(currentNewP);
-                    currentNewP = docDom.createElement('w:p');
-                    if (pPr) currentNewP.appendChild(pPr.cloneNode(true));
-                }
-            }
-
-            currentNewP.appendChild(child.cloneNode(true));
-        }
-
-        if (currentNewP.childNodes.length > 0) {
-            resultNodes.push(currentNewP);
-        }
-
-        return resultNodes;
-    }
-
-    buildFinalDocx(fileBuffer: Buffer, docDom: any, originalParagraphs: any, shuffledQuestions: Question[]): Buffer {
+    buildFinalDocx(fileBuffer: Buffer, docDom: any, classifiedLines: ClassifiedLine[], shuffledQuestions: Question[]): Buffer {
         const bodyNode = docDom.getElementsByTagName('w:body')[0];
 
-        for (let i = 0; i < originalParagraphs.length; i++) {
-            const pNode = originalParagraphs.item(i);
-            if (pNode.parentNode) {
-                pNode.parentNode.removeChild(pNode);
-            }
-        }
+        const firstContentLine = classifiedLines.find(l => l.type === LineType.TAG || l.type === LineType.QUESTION);
+        let insertAnchor = firstContentLine ? firstContentLine.node : bodyNode.getElementsByTagName('w:sectPr')[0];
 
-        const sectPr = bodyNode.getElementsByTagName('w:sectPr')[0];
+        const LETTERS = ['A', 'B', 'C', 'D'];
+        let questionIndex = 1;
 
         for (const q of shuffledQuestions) {
+            let replacedQ = false;
             for (const qNode of q.questionNodes) {
-                bodyNode.insertBefore(qNode, sectPr);
+                const clonedQNode = qNode.cloneNode(true);
+                if (!replacedQ) {
+                    this.updateLabel(clonedQNode, /^\s*(câu|question)\s*\d+\s*[:\.]/i, `Câu ${questionIndex}: `);
+                    replacedQ = true;
+                }
+                bodyNode.insertBefore(clonedQNode, insertAnchor);
             }
 
-            const uniqueAnswerNodes = new Set(q.answers.map(a => a.originalNode));
+            const uniqueAnswerNodesArray = Array.from(new Set(q.answers.map(a => a.originalNode)));
 
-            if (uniqueAnswerNodes.size === 1 && q.answers.length > 1) {
-                const singleNode = Array.from(uniqueAnswerNodes)[0];
-                const splitNodes = this.splitInlineAnswersNode(docDom, singleNode);
-
-                for (const sNode of splitNodes) {
-                    bodyNode.insertBefore(sNode, sectPr);
+            if (uniqueAnswerNodesArray.length === q.answers.length) {
+                for (let i = 0; i < q.answers.length; i++) {
+                    const a = q.answers[i];
+                    if (a.originalNode) {
+                        const clonedANode = a.originalNode.cloneNode(true);
+                        const newLabel = `${LETTERS[i]}.`;
+                        this.updateLabel(clonedANode, /^\s*#?[A-D]\./i, newLabel);
+                        this.removeRedColorAndUnderline(clonedANode);
+                        bodyNode.insertBefore(clonedANode, insertAnchor);
+                    }
                 }
             } else {
-                for (const a of q.answers) {
-                    bodyNode.insertBefore(a.originalNode, sectPr);
+                const originalOrderAnswers = [...q.answers].sort((a, b) => a.originalIndex - b.originalIndex);
+                const originalNodesToInsert = Array.from(new Set(originalOrderAnswers.map(a => a.originalNode)));
+
+                for (const singleNode of originalNodesToInsert) {
+                    const clonedNode = singleNode.cloneNode(true);
+                    this.removeRedColorAndUnderline(clonedNode);
+                    bodyNode.insertBefore(clonedNode, insertAnchor);
                 }
             }
+            questionIndex++;
         }
+
+        const nodesToRemove = new Set<any>();
+        const startIndex = classifiedLines.findIndex(l => l.type === LineType.TAG || l.type === LineType.QUESTION);
+        if (startIndex !== -1) {
+            for (let i = startIndex; i < classifiedLines.length; i++) {
+                nodesToRemove.add(classifiedLines[i].node);
+            }
+        }
+        nodesToRemove.forEach(node => {
+            if (node && node.parentNode) node.parentNode.removeChild(node);
+        });
 
         const serializer = new XMLSerializer();
         const newXmlString = serializer.serializeToString(docDom);
-
         const zip = new AdmZip(fileBuffer);
         zip.updateFile('word/document.xml', Buffer.from(newXmlString, 'utf8'));
 
