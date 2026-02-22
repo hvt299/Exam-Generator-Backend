@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import AdmZip from 'adm-zip';
 import { DOMParser } from '@xmldom/xmldom';
+import { XMLSerializer } from '@xmldom/xmldom';
 
 export enum LineType {
     TAG = 'TAG',
@@ -274,5 +275,82 @@ export class DocxParserService {
         }
 
         return mixedExam;
+    }
+
+    private splitInlineAnswersNode(docDom: any, originalPNode: any): any[] {
+        const childNodes = originalPNode.childNodes;
+        const resultNodes: Element[] = [];
+        let currentNewP = docDom.createElement('w:p');
+
+        const pPr = originalPNode.getElementsByTagName('w:pPr')[0];
+        if (pPr) currentNewP.appendChild(pPr.cloneNode(true));
+
+        for (let i = 0; i < childNodes.length; i++) {
+            const child = childNodes.item(i);
+
+            if (child.nodeName === 'w:r') {
+                const textNodes = child.getElementsByTagName('w:t');
+                let textContent = '';
+                for (let j = 0; j < textNodes.length; j++) {
+                    textContent += textNodes.item(j).textContent;
+                }
+
+                if (/(?=\s*#?[A-D]\.)/i.test(textContent) && currentNewP.childNodes.length > (pPr ? 1 : 0)) {
+                    resultNodes.push(currentNewP);
+                    currentNewP = docDom.createElement('w:p');
+                    if (pPr) currentNewP.appendChild(pPr.cloneNode(true));
+                }
+            }
+
+            currentNewP.appendChild(child.cloneNode(true));
+        }
+
+        if (currentNewP.childNodes.length > 0) {
+            resultNodes.push(currentNewP);
+        }
+
+        return resultNodes;
+    }
+
+    buildFinalDocx(fileBuffer: Buffer, docDom: any, originalParagraphs: any, shuffledQuestions: Question[]): Buffer {
+        const bodyNode = docDom.getElementsByTagName('w:body')[0];
+
+        for (let i = 0; i < originalParagraphs.length; i++) {
+            const pNode = originalParagraphs.item(i);
+            if (pNode.parentNode) {
+                pNode.parentNode.removeChild(pNode);
+            }
+        }
+
+        const sectPr = bodyNode.getElementsByTagName('w:sectPr')[0];
+
+        for (const q of shuffledQuestions) {
+            for (const qNode of q.questionNodes) {
+                bodyNode.insertBefore(qNode, sectPr);
+            }
+
+            const uniqueAnswerNodes = new Set(q.answers.map(a => a.originalNode));
+
+            if (uniqueAnswerNodes.size === 1 && q.answers.length > 1) {
+                const singleNode = Array.from(uniqueAnswerNodes)[0];
+                const splitNodes = this.splitInlineAnswersNode(docDom, singleNode);
+
+                for (const sNode of splitNodes) {
+                    bodyNode.insertBefore(sNode, sectPr);
+                }
+            } else {
+                for (const a of q.answers) {
+                    bodyNode.insertBefore(a.originalNode, sectPr);
+                }
+            }
+        }
+
+        const serializer = new XMLSerializer();
+        const newXmlString = serializer.serializeToString(docDom);
+
+        const zip = new AdmZip(fileBuffer);
+        zip.updateFile('word/document.xml', Buffer.from(newXmlString, 'utf8'));
+
+        return zip.toBuffer();
     }
 }

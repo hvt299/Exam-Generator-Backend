@@ -1,14 +1,17 @@
-import { Controller, Post, UseInterceptors, UploadedFile, BadRequestException } from '@nestjs/common';
+import { Controller, Post, UseInterceptors, UploadedFile, BadRequestException, Res, Header } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocxParserService } from './docx-parser.service';
+import express from 'express';
 
 @Controller('api/v1/exams')
 export class DocxParserController {
     constructor(private readonly docxParserService: DocxParserService) { }
 
-    @Post('upload-raw')
+    @Post('mix')
     @UseInterceptors(FileInterceptor('file'))
-    uploadDocx(@UploadedFile() file: Express.Multer.File) {
+    @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    @Header('Content-Disposition', 'attachment; filename="De_Thi_Da_Tron.docx"')
+    uploadAndMixDocx(@UploadedFile() file: Express.Multer.File, @Res() res: express.Response) {
         if (!file) {
             throw new BadRequestException('Vui lòng upload file .docx');
         }
@@ -21,20 +24,9 @@ export class DocxParserController {
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
         const classifiedLines = this.docxParserService.classifyParagraphs(domResult.paragraphs);
         const baseQuestions = this.docxParserService.buildQuestionBlocks(classifiedLines);
+        const mixedVariant = this.docxParserService.generateExamVariant(baseQuestions);
+        const finalBuffer = this.docxParserService.buildFinalDocx(file.buffer, domResult.docDom, domResult.paragraphs, mixedVariant);
 
-        const variant1 = this.docxParserService.generateExamVariant(baseQuestions);
-        const variant2 = this.docxParserService.generateExamVariant(baseQuestions);
-
-        const formatVariant = (variant: any[]) => variant.map(q => ({
-            question: q.questionText.substring(0, 40) + '...',
-            answers: q.answers.map(a => `[${a.char}] ${a.text}`)
-        })).slice(0, 3);
-
-        return {
-            message: 'Shuffler Engine hoạt động hoàn hảo!',
-            original_Top3: formatVariant(baseQuestions),
-            variant1_Top3: formatVariant(variant1),
-            variant2_Top3: formatVariant(variant2),
-        };
+        res.send(finalBuffer);
     }
 }
