@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import AdmZip from 'adm-zip';
+import { DOMParser } from '@xmldom/xmldom';
 
 @Injectable()
 export class DocxParserService {
@@ -19,6 +20,22 @@ export class DocxParserService {
 
         } catch (error) {
             throw new BadRequestException(`Lỗi khi đọc file DOCX: ${error.message}`);
+        }
+    }
+
+    parseXmlToDom(xmlString: string) {
+        try {
+            const parser = new DOMParser();
+            const docDom = parser.parseFromString(xmlString, 'text/xml');
+
+            const paragraphs = docDom.getElementsByTagName('w:p');
+
+            return {
+                docDom,
+                paragraphCount: paragraphs.length
+            };
+        } catch (error) {
+            throw new BadRequestException(`Lỗi khi parse XML sang DOM: ${error.message}`);
         }
     }
 }

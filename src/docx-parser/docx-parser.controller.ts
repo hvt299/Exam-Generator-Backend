@@ -18,11 +18,13 @@ export class DocxParserController {
         }
 
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
+        const domResult = this.docxParserService.parseXmlToDom(rawXml);
 
         return {
-            message: 'Trích xuất XML thành công!',
+            message: 'Parse XML thành DOM thành công!',
             fileName: file.originalname,
             xmlLength: rawXml.length,
+            totalParagraphs: domResult.paragraphCount
         };
     }
 }
