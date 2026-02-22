@@ -20,19 +20,21 @@ export class DocxParserController {
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
         const classifiedLines = this.docxParserService.classifyParagraphs(domResult.paragraphs);
-        const questions = this.docxParserService.buildQuestionBlocks(classifiedLines);
+        const baseQuestions = this.docxParserService.buildQuestionBlocks(classifiedLines);
 
-        const report = questions.map(q => ({
-            group: q.group,
-            question: q.questionText.substring(0, 50) + '...',
-            answersCount: q.answers.length,
-            answers: q.answers.map(a => `[${a.isPinned ? 'PIN' : 'MIX'}] ${a.text}`)
-        }));
+        const variant1 = this.docxParserService.generateExamVariant(baseQuestions);
+        const variant2 = this.docxParserService.generateExamVariant(baseQuestions);
+
+        const formatVariant = (variant: any[]) => variant.map(q => ({
+            question: q.questionText.substring(0, 40) + '...',
+            answers: q.answers.map(a => `[${a.char}] ${a.text}`)
+        })).slice(0, 3);
 
         return {
-            message: 'Gom nhóm và Kiểm lỗi thành công!',
-            totalQuestions: questions.length,
-            sampleQuestions: report.slice(0, 5)
+            message: 'Shuffler Engine hoạt động hoàn hảo!',
+            original_Top3: formatVariant(baseQuestions),
+            variant1_Top3: formatVariant(variant1),
+            variant2_Top3: formatVariant(variant2),
         };
     }
 }

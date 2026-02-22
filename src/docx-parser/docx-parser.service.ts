@@ -149,7 +149,7 @@ export class DocxParserService {
                     this.validateQuestion(currentQuestion);
                     questions.push(currentQuestion);
                 }
-                
+
                 currentQuestion = {
                     questionText: line.text.trim(),
                     questionNodes: [line.node],
@@ -167,7 +167,7 @@ export class DocxParserService {
                 for (const part of answerParts) {
                     const trimmed = part.trim();
                     const isPinned = trimmed.startsWith('#');
-                    
+
                     const charMatch = trimmed.match(/#?([A-D])\./);
                     const char = charMatch ? charMatch[1] : '';
 
@@ -211,5 +211,68 @@ export class DocxParserService {
         if (q.answers.length !== 4) {
             throw new BadRequestException(`Lỗi tại "${q.questionText}".\nTìm thấy ${q.answers.length} đáp án thay vì 4. Vui lòng kiểm tra lại định dạng A., B., C., D.`);
         }
+    }
+
+    private shuffleArray<T>(array: T[]): T[] {
+        const result = [...array];
+        for (let i = result.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [result[i], result[j]] = [result[j], result[i]];
+        }
+        return result;
+    }
+
+    private shuffleAnswersWithPins(answers: Answer[]): Answer[] {
+        const unpinnedAnswers = answers.filter(a => !a.isPinned);
+        const shuffledUnpinned = this.shuffleArray(unpinnedAnswers);
+        const result: Answer[] = [];
+        let unpinnedIndex = 0;
+
+        for (let i = 0; i < answers.length; i++) {
+            if (answers[i].isPinned) {
+                result.push(answers[i]);
+            } else {
+                result.push(shuffledUnpinned[unpinnedIndex++]);
+            }
+        }
+        return result;
+    }
+
+    generateExamVariant(questions: Question[]): Question[] {
+        const groupedQuestions: Record<string, Question[]> = {};
+        const groupOrder: string[] = [];
+
+        for (const q of questions) {
+            if (!groupedQuestions[q.group]) {
+                groupedQuestions[q.group] = [];
+                groupOrder.push(q.group);
+            }
+            groupedQuestions[q.group].push(q);
+        }
+
+        const mixedExam: Question[] = [];
+
+        for (const groupTag of groupOrder) {
+            let groupQs = [...groupedQuestions[groupTag]];
+
+            const match = groupTag.match(/<g([0-3])(?:#([1-3]))?>/i);
+            const gRule = match ? parseInt(match[1], 10) : 0;
+
+            if (gRule === 1 || gRule === 3) {
+                groupQs = this.shuffleArray(groupQs);
+            }
+
+            for (const q of groupQs) {
+                const clonedQuestion: Question = { ...q, answers: [...q.answers] };
+
+                if (gRule === 2 || gRule === 3) {
+                    clonedQuestion.answers = this.shuffleAnswersWithPins(clonedQuestion.answers);
+                }
+
+                mixedExam.push(clonedQuestion);
+            }
+        }
+
+        return mixedExam;
     }
 }
