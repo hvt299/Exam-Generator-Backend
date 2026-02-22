@@ -19,14 +19,17 @@ export class DocxParserController {
 
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
-        const allTexts = this.docxParserService.getAllParagraphTexts(domResult.paragraphs);
+        const classifiedLines = this.docxParserService.classifyParagraphs(domResult.paragraphs);
+
+        const report = classifiedLines.slice(0, 20).map(line => ({
+            type: line.type,
+            text: line.text.trim()
+        }));
 
         return {
-            message: 'Trích xuất Text thành công!',
-            fileName: file.originalname,
-            totalParagraphs: domResult.paragraphCount,
-            nonEmptyParagraphs: allTexts.length,
-            sampleTexts: allTexts.slice(0, 15)
+            message: 'Phân loại Regex thành công!',
+            totalValidLines: classifiedLines.length,
+            sampleClassification: report
         };
     }
 }
