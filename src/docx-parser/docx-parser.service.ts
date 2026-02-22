@@ -23,6 +23,20 @@ export interface ClassifiedLine {
     node: any;
 }
 
+export interface Answer {
+    char: string;
+    text: string;
+    isPinned: boolean;
+    originalNode: any;
+}
+
+export interface Question {
+    questionText: string;
+    questionNodes: any[];
+    answers: Answer[];
+    group: string;
+}
+
 @Injectable()
 export class DocxParserService {
 
@@ -117,5 +131,85 @@ export class DocxParserService {
         }
 
         return classifiedLines;
+    }
+
+    buildQuestionBlocks(classifiedLines: ClassifiedLine[]): Question[] {
+        const questions: Question[] = [];
+        let currentGroup = '<g3#1>';
+        let currentQuestion: Question | null = null;
+
+        for (let i = 0; i < classifiedLines.length; i++) {
+            const line = classifiedLines[i];
+
+            if (line.type === LineType.TAG) {
+                currentGroup = line.text.trim();
+            }
+            else if (line.type === LineType.QUESTION) {
+                if (currentQuestion) {
+                    this.validateQuestion(currentQuestion);
+                    questions.push(currentQuestion);
+                }
+                
+                currentQuestion = {
+                    questionText: line.text.trim(),
+                    questionNodes: [line.node],
+                    answers: [],
+                    group: currentGroup
+                };
+            }
+            else if (line.type === LineType.ANSWER_MCQ) {
+                if (!currentQuestion) {
+                    throw new BadRequestException(`Lỗi nghiêm trọng: Tìm thấy đáp án nhưng không thuộc câu hỏi nào.\nNội dung: "${line.text.trim()}"`);
+                }
+
+                const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
+
+                for (const part of answerParts) {
+                    const trimmed = part.trim();
+                    const isPinned = trimmed.startsWith('#');
+                    
+                    const charMatch = trimmed.match(/#?([A-D])\./);
+                    const char = charMatch ? charMatch[1] : '';
+
+                    currentQuestion.answers.push({
+                        char,
+                        text: trimmed,
+                        isPinned,
+                        originalNode: line.node
+                    });
+                }
+            }
+            else if (line.type === LineType.TEXT) {
+                if (currentQuestion && currentQuestion.answers.length === 0) {
+                    currentQuestion.questionText += '\n' + line.text.trim();
+                    currentQuestion.questionNodes.push(line.node);
+                } else if (currentQuestion && currentQuestion.answers.length > 0) {
+                }
+            }
+        }
+
+        if (currentQuestion) {
+            this.validateQuestion(currentQuestion);
+            questions.push(currentQuestion);
+        }
+
+        return questions;
+    }
+
+    private validateQuestion(q: Question) {
+        if (q.answers.length === 0) {
+            return;
+        }
+
+        const chars = q.answers.map(a => a.char);
+        const uniqueChars = new Set(chars);
+
+        if (chars.length !== uniqueChars.size) {
+            throw new BadRequestException(`Lỗi tại "${q.questionText}".\nCó đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A.).`);
+        }
+
+        if (q.answers.length !== 4) {
+            throw new BadRequestException(`Lỗi tại "${q.questionText}".\nTìm thấy ${q.answers.length} đáp án thay vì 4. Vui lòng kiểm tra lại định dạng A., B., C., D.`);
+        }
     }
 }

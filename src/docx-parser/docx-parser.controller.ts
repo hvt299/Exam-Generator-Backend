@@ -20,16 +20,19 @@ export class DocxParserController {
         const rawXml = this.docxParserService.extractDocumentXml(file.buffer);
         const domResult = this.docxParserService.parseXmlToDom(rawXml);
         const classifiedLines = this.docxParserService.classifyParagraphs(domResult.paragraphs);
+        const questions = this.docxParserService.buildQuestionBlocks(classifiedLines);
 
-        const report = classifiedLines.slice(0, 20).map(line => ({
-            type: line.type,
-            text: line.text.trim()
+        const report = questions.map(q => ({
+            group: q.group,
+            question: q.questionText.substring(0, 50) + '...',
+            answersCount: q.answers.length,
+            answers: q.answers.map(a => `[${a.isPinned ? 'PIN' : 'MIX'}] ${a.text}`)
         }));
 
         return {
-            message: 'Phân loại Regex thành công!',
-            totalValidLines: classifiedLines.length,
-            sampleClassification: report
+            message: 'Gom nhóm và Kiểm lỗi thành công!',
+            totalQuestions: questions.length,
+            sampleQuestions: report.slice(0, 5)
         };
     }
 }
