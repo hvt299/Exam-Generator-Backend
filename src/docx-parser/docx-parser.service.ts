@@ -1,5 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import AdmZip from 'adm-zip';
+import archiver from 'archiver';
+import ExcelJS from 'exceljs';
 import { DOMParser, XMLSerializer } from '@xmldom/xmldom';
 
 export enum LineType {
@@ -29,6 +31,7 @@ export interface Answer {
     isPinned: boolean;
     originalNode: any;
     originalIndex: number;
+    isCorrect: boolean;
 }
 
 export interface Question {
@@ -159,17 +162,22 @@ export class DocxParserService {
 
                 const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
 
+                const xmlStr = new XMLSerializer().serializeToString(line.node).toLowerCase();
+                const nodeHasRedOrUnderline = xmlStr.includes('w:val="ff0000"') || xmlStr.includes('w:val="red"') || xmlStr.includes('<w:u ');
+
                 for (let j = 0; j < answerParts.length; j++) {
                     const part = answerParts[j];
                     const trimmed = part.trim();
                     const isPinned = trimmed.startsWith('#');
                     const charMatch = trimmed.match(/#?([A-D])\./);
                     const char = charMatch ? charMatch[1] : '';
+                    const isCorrect = (answerParts.length === 1 && nodeHasRedOrUnderline);
 
                     currentQuestion.answers.push({
                         char, text: trimmed, isPinned,
                         originalNode: line.node,
-                        originalIndex: currentQuestion.answers.length
+                        originalIndex: currentQuestion.answers.length,
+                        isCorrect
                     });
                 }
             }
@@ -372,5 +380,50 @@ export class DocxParserService {
         zip.updateFile('word/document.xml', Buffer.from(newXmlString, 'utf8'));
 
         return zip.toBuffer();
+    }
+
+    async generateMultipleExamsZip(fileBuffer: Buffer, numExams: number, startCode: number, archive: archiver.Archiver) {
+        const rawXml = this.extractDocumentXml(fileBuffer);
+
+        const workbook = new ExcelJS.Workbook();
+        const sheet = workbook.addWorksheet('Đáp Án');
+
+        const columns = [{ header: 'Câu', key: 'q', width: 10 }];
+        for (let i = 0; i < numExams; i++) {
+            columns.push({ header: `Mã ${Number(startCode) + i}`, key: `code_${i}`, width: 12 });
+        }
+        sheet.columns = columns;
+
+        const allKeys: string[][] = [];
+
+        for (let i = 0; i < numExams; i++) {
+            const domResult = this.parseXmlToDom(rawXml);
+            const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const baseQuestions = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+
+            const mixedVariant = this.generateExamVariant(baseQuestions);
+
+            const LETTERS = ['A', 'B', 'C', 'D'];
+            const variantKeys = mixedVariant.map(q => {
+                const correctIndex = q.answers.findIndex(a => a.isCorrect);
+                return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
+            });
+            allKeys.push(variantKeys);
+
+            const buffer = this.buildFinalDocx(fileBuffer, domResult.docDom, classifiedLines, mixedVariant);
+            archive.append(buffer, { name: `De_Thi_Ma_${Number(startCode) + i}.docx` });
+        }
+
+        const numQuestions = allKeys[0]?.length || 0;
+        for (let qIdx = 0; qIdx < numQuestions; qIdx++) {
+            const rowData: any = { q: `Câu ${qIdx + 1}` };
+            for (let eIdx = 0; eIdx < numExams; eIdx++) {
+                rowData[`code_${eIdx}`] = allKeys[eIdx][qIdx];
+            }
+            sheet.addRow(rowData);
+        }
+
+        const excelBuffer = await workbook.xlsx.writeBuffer();
+        archive.append(excelBuffer as unknown as Buffer, { name: 'Bang_Dap_An.xlsx' });
     }
 }
