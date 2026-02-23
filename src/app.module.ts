@@ -1,10 +1,17 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { DocxParserModule } from './docx-parser/docx-parser.module';
 
 @Module({
-  imports: [DocxParserModule],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: ['.env.local', '.env'],
+    }),
+    DocxParserModule,
+  ],
   controllers: [AppController],
   providers: [AppService],
 })
