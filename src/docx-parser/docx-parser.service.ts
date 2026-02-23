@@ -213,8 +213,9 @@ export class DocxParserService {
         return correctIndices;
     }
 
-    buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any): Question[] {
+    buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any): { questions: Question[], errors: string[] } {
         const questions: Question[] = [];
+        const errors: string[] = [];
         let currentGroup = '<g3#1>';
         let currentQuestion: Question | null = null;
 
@@ -226,7 +227,7 @@ export class DocxParserService {
             }
             else if (line.type === LineType.QUESTION) {
                 if (currentQuestion) {
-                    this.validateQuestion(currentQuestion);
+                    this.validateQuestion(currentQuestion, errors);
                     questions.push(currentQuestion);
                 }
                 currentQuestion = {
@@ -237,7 +238,10 @@ export class DocxParserService {
                 };
             }
             else if (line.type === LineType.ANSWER_MCQ) {
-                if (!currentQuestion) throw new BadRequestException(`Lỗi: ${line.text}`);
+                if (!currentQuestion) {
+                    errors.push(`[Lỗi cấu trúc] Tìm thấy đáp án nhưng không có câu hỏi ở trên: "${line.text.trim()}"`);
+                    continue;
+                }
 
                 const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
                 const correctIndices = this.getCorrectAnswerIndices(line.node, answerParts);
@@ -265,10 +269,10 @@ export class DocxParserService {
             }
         }
         if (currentQuestion) {
-            this.validateQuestion(currentQuestion);
+            this.validateQuestion(currentQuestion, errors);
             questions.push(currentQuestion);
         }
-        return questions;
+        return { questions, errors };
     }
 
     private updateLabel(pNode: any, regex: RegExp, newLabel: string) {
@@ -279,16 +283,12 @@ export class DocxParserService {
         const match = fullText.match(regex);
         if (!match || match.index === undefined) return;
 
-        const matchStart = match.index;
-        const matchEnd = matchStart + match[0].length;
-        let currentPos = 0;
-        let replaced = false;
+        const matchStart = match.index, matchEnd = matchStart + match[0].length;
+        let currentPos = 0, replaced = false;
 
         for (let i = 0; i < ts.length; i++) {
-            const tNode = ts.item(i);
-            const text = tNode.textContent || '';
-            const nodeStart = currentPos;
-            const nodeEnd = currentPos + text.length;
+            const tNode = ts.item(i), text = tNode.textContent || '';
+            const nodeStart = currentPos, nodeEnd = currentPos + text.length;
 
             if (nodeEnd <= matchStart || nodeStart >= matchEnd) {
                 currentPos = nodeEnd; continue;
@@ -320,17 +320,61 @@ export class DocxParserService {
         }
     }
 
-    private validateQuestion(q: Question) {
+    private validateQuestion(q: Question, errors: string[]) {
         if (q.answers.length === 0) return;
         const chars = q.answers.map(a => a.char);
         const uniqueChars = new Set(chars);
+        const qTitle = q.questionText.split('\n')[0].substring(0, 40) + '...';
 
         if (chars.length !== uniqueChars.size) {
-            throw new BadRequestException(`Lỗi tại "${q.questionText}".\nCó đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A.).`);
+            errors.push(`[${qTitle}] Có đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A).`);
         }
         if (q.answers.length !== 4) {
-            throw new BadRequestException(`Lỗi tại "${q.questionText}".\nTìm thấy ${q.answers.length} đáp án thay vì 4. Vui lòng kiểm tra lại định dạng A., B., C., D.`);
+            errors.push(`[${qTitle}] Tìm thấy ${q.answers.length} đáp án thay vì 4. Hãy kiểm tra lại ngắt dòng.`);
         }
+        if (!q.answers.some(a => a.isCorrect)) {
+            errors.push(`[${qTitle}] Chưa đánh dấu đáp án đúng (cần bôi đỏ hoặc gạch chân).`);
+        }
+    }
+
+    async previewExams(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number) {
+        const rawXml = this.extractDocumentXml(fileBuffer);
+        const domResult = this.parseXmlToDom(rawXml);
+        const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+
+        const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+
+        if (errors.length > 0) {
+            return { success: false, errors };
+        }
+
+        const allKeys: string[][] = [];
+        let previewExamContent: any[] = [];
+
+        for (let i = 0; i < numExams; i++) {
+            const mixedVariant = this.generateExamVariant(baseQuestions);
+            const LETTERS = ['A', 'B', 'C', 'D'];
+
+            const variantKeys = mixedVariant.map(q => {
+                const correctIndex = q.answers.findIndex(a => a.isCorrect);
+                return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
+            });
+            allKeys.push(variantKeys);
+
+            if (i === 0) {
+                previewExamContent = mixedVariant.map((q, idx) => ({
+                    question: `Câu ${startQuestion + idx}: ${q.questionText.replace(/^(câu|question)\s*\d+\s*[:\.]\s*/i, '')}`,
+                    answers: q.answers.map((a, aIdx) => `${LETTERS[aIdx]}. ${a.text.replace(/^#?[A-D]\.\s*/i, '')}`),
+                    correctAnswer: LETTERS[q.answers.findIndex(a => a.isCorrect)]
+                }));
+            }
+        }
+
+        return {
+            success: true,
+            matrix: allKeys,
+            previewExam: previewExamContent
+        };
     }
 
     private shuffleArray<T>(array: T[]): T[] {
@@ -492,7 +536,9 @@ export class DocxParserService {
             const currentCode = Number(startCode) + i;
             const domResult = this.parseXmlToDom(rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
-            const baseQuestions = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+
+            const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+            if (errors.length > 0) throw new BadRequestException('File đề thi có lỗi định dạng:\n' + errors.join('\n'));
 
             const mixedVariant = this.generateExamVariant(baseQuestions);
 

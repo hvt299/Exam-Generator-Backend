@@ -36,4 +36,23 @@ export class DocxParserController {
 
         await archive.finalize();
     }
+
+    @Post('preview')
+    @UseInterceptors(FileInterceptor('file'))
+    async previewExamData(
+        @UploadedFile() file: Express.Multer.File,
+        @Body('numExams') numExams: string = '4',
+        @Body('startCode') startCode: string = '101',
+        @Body('startQuestion') startQuestion: string = '1',
+    ) {
+        if (!file || !file.originalname.endsWith('.docx')) {
+            throw new BadRequestException('Vui lòng upload file .docx');
+        }
+
+        const nExams = parseInt(numExams, 10);
+        const sCode = parseInt(startCode, 10);
+        const sQuestion = parseInt(startQuestion, 10);
+
+        return await this.docxParserService.previewExams(file.buffer, nExams, sCode, sQuestion);
+    }
 }
