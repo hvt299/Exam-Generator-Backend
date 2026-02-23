@@ -64,12 +64,29 @@ export class DocxParserService {
         try {
             const parser = new DOMParser();
             const docDom = parser.parseFromString(xmlString, 'text/xml');
-            const paragraphs = docDom.getElementsByTagName('w:p');
+            const allParagraphs = docDom.getElementsByTagName('w:p');
+            const validParagraphs: Element[] = [];
+
+            for (let i = 0; i < allParagraphs.length; i++) {
+                const p = allParagraphs.item(i);
+                if (!p) continue;
+                let isNested = false;
+                let parent = p.parentNode;
+                while (parent) {
+                    if (parent.nodeName === 'w:txbxContent' || parent.nodeName === 'v:textbox') {
+                        isNested = true; break;
+                    }
+                    parent = parent.parentNode;
+                }
+                if (!isNested) validParagraphs.push(p);
+            }
+
+            (validParagraphs as any).item = function (i: number) { return this[i]; };
 
             return {
                 docDom,
-                paragraphs,
-                paragraphCount: paragraphs.length
+                paragraphs: validParagraphs,
+                paragraphCount: validParagraphs.length
             };
         } catch (error) {
             throw new BadRequestException(`Lỗi khi parse XML sang DOM: ${error.message}`);
@@ -376,14 +393,30 @@ export class DocxParserService {
         return mixedExam;
     }
 
-    buildFinalDocx(fileBuffer: Buffer, docDom: any, classifiedLines: ClassifiedLine[], shuffledQuestions: Question[]): Buffer {
+    buildFinalDocx(fileBuffer: Buffer, docDom: any, classifiedLines: ClassifiedLine[], shuffledQuestions: Question[], startQuestion: number, examCode: number): Buffer {
         const bodyNode = docDom.getElementsByTagName('w:body')[0];
 
         const firstContentLine = classifiedLines.find(l => l.type === LineType.TAG || l.type === LineType.QUESTION);
         let insertAnchor = firstContentLine ? firstContentLine.node : bodyNode.getElementsByTagName('w:sectPr')[0];
 
+        const maDeP = docDom.createElement('w:p');
+        const maDeR = docDom.createElement('w:r');
+        const maDeRPr = docDom.createElement('w:rPr');
+        const rFonts = docDom.createElement('w:rFonts');
+        rFonts.setAttribute('w:ascii', 'Times New Roman');
+        rFonts.setAttribute('w:hAnsi', 'Times New Roman');
+        rFonts.setAttribute('w:cs', 'Times New Roman');
+        maDeRPr.appendChild(rFonts);
+        maDeRPr.appendChild(docDom.createElement('w:b'));
+        const maDeT = docDom.createElement('w:t');
+        maDeT.textContent = `Mã đề: ${examCode}`;
+        maDeR.appendChild(maDeRPr);
+        maDeR.appendChild(maDeT);
+        maDeP.appendChild(maDeR);
+        bodyNode.insertBefore(maDeP, insertAnchor);
+
         const LETTERS = ['A', 'B', 'C', 'D'];
-        let questionIndex = 1;
+        let questionIndex = startQuestion;
 
         for (const q of shuffledQuestions) {
             let replacedQ = false;
@@ -441,7 +474,7 @@ export class DocxParserService {
         return zip.toBuffer();
     }
 
-    async generateMultipleExamsZip(fileBuffer: Buffer, numExams: number, startCode: number, archive: archiver.Archiver) {
+    async generateMultipleExamsZip(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number, archive: archiver.Archiver) {
         const rawXml = this.extractDocumentXml(fileBuffer);
 
         const workbook = new ExcelJS.Workbook();
@@ -456,6 +489,7 @@ export class DocxParserService {
         const allKeys: string[][] = [];
 
         for (let i = 0; i < numExams; i++) {
+            const currentCode = Number(startCode) + i;
             const domResult = this.parseXmlToDom(rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
             const baseQuestions = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
@@ -469,13 +503,13 @@ export class DocxParserService {
             });
             allKeys.push(variantKeys);
 
-            const buffer = this.buildFinalDocx(fileBuffer, domResult.docDom, classifiedLines, mixedVariant);
-            archive.append(buffer, { name: `De_Thi_Ma_${Number(startCode) + i}.docx` });
+            const buffer = this.buildFinalDocx(fileBuffer, domResult.docDom, classifiedLines, mixedVariant, startQuestion, currentCode);
+            archive.append(buffer, { name: `Ma_de_${currentCode}.docx` });
         }
 
         const numQuestions = allKeys[0]?.length || 0;
         for (let qIdx = 0; qIdx < numQuestions; qIdx++) {
-            const rowData: any = { q: `Câu ${qIdx + 1}` };
+            const rowData: any = { q: `Câu ${startQuestion + qIdx}` };
             for (let eIdx = 0; eIdx < numExams; eIdx++) {
                 rowData[`code_${eIdx}`] = allKeys[eIdx][qIdx];
             }
@@ -483,6 +517,6 @@ export class DocxParserService {
         }
 
         const excelBuffer = await workbook.xlsx.writeBuffer();
-        archive.append(excelBuffer as unknown as Buffer, { name: 'Bang_Dap_An.xlsx' });
+        archive.append(excelBuffer as unknown as Buffer, { name: 'Dap_an_excel.xlsx' });
     }
 }
