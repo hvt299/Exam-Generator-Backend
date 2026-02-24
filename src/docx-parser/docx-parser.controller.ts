@@ -16,6 +16,12 @@ export class DocxParserController {
         @Body('numExams') numExams: string = '4',
         @Body('startCode') startCode: string = '101',
         @Body('startQuestion') startQuestion: string = '1',
+        @Body('department') department: string = 'SỞ GD&ĐT...',
+        @Body('school') school: string = 'TRƯỜNG THPT...',
+        @Body('examName') examName: string = 'KIỂM TRA CUỐI KÌ I',
+        @Body('schoolYear') schoolYear: string = 'NĂM HỌC 2025 - 2026',
+        @Body('subject') subject: string = 'Toán',
+        @Body('duration') duration: string = '90 phút',
         @Res() res: Response
     ) {
         if (!file || !file.originalname.endsWith('.docx')) {
@@ -32,7 +38,9 @@ export class DocxParserController {
         const sCode = parseInt(startCode, 10);
         const sQuestion = parseInt(startQuestion, 10);
 
-        await this.docxParserService.generateMultipleExamsZip(file.buffer, nExams, sCode, sQuestion, archive);
+        const headerInfo = { department, school, examName, schoolYear, subject, duration };
+
+        await this.docxParserService.generateMultipleExamsZip(file.buffer, nExams, sCode, sQuestion, headerInfo, archive);
 
         await archive.finalize();
     }
