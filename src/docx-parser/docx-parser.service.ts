@@ -237,21 +237,26 @@ export class DocxParserService {
                     group: currentGroup
                 };
             }
-            else if (line.type === LineType.ANSWER_MCQ) {
+            else if (line.type === LineType.ANSWER_MCQ || line.type === LineType.ANSWER_TF) {
                 if (!currentQuestion) {
                     errors.push(`[Lỗi cấu trúc] Tìm thấy đáp án nhưng không có câu hỏi ở trên: "${line.text.trim()}"`);
                     continue;
                 }
 
-                const answerParts = line.text.split(/(?=\s*#?[A-D]\.)/g).filter(p => p.trim().length > 0);
+                const isTF = line.type === LineType.ANSWER_TF;
+                const regex = isTF
+                    ? /(?=\s*#[a-d]\)|\s*(?<!#)[a-d]\))/
+                    : /(?=\s*#[A-D]\.|\s*(?<!#)[A-D]\.)/;
+
+                const answerParts = line.text.split(regex).filter(p => p.trim().length > 0);
                 const correctIndices = this.getCorrectAnswerIndices(line.node, answerParts);
 
                 for (let j = 0; j < answerParts.length; j++) {
                     const part = answerParts[j];
                     const trimmed = part.trim();
                     const isPinned = trimmed.startsWith('#');
-                    const charMatch = trimmed.match(/#?([A-D])\./);
-                    const char = charMatch ? charMatch[1] : '';
+                    const charMatch = isTF ? trimmed.match(/#?([a-d])\)/) : trimmed.match(/#?([A-D])\./);
+                    const char = charMatch ? (isTF ? charMatch[1].toLowerCase() : charMatch[1].toUpperCase()) : '';
 
                     currentQuestion.answers.push({
                         char, text: trimmed, isPinned,
@@ -284,26 +289,46 @@ export class DocxParserService {
         if (!match || match.index === undefined) return;
 
         const matchStart = match.index, matchEnd = matchStart + match[0].length;
-        let currentPos = 0, replaced = false;
+        let currentPos = 0;
+
+        let firstIdx = -1;
+        let lastIdx = -1;
 
         for (let i = 0; i < ts.length; i++) {
             const tNode = ts.item(i), text = tNode.textContent || '';
             const nodeStart = currentPos, nodeEnd = currentPos + text.length;
 
-            if (nodeEnd <= matchStart || nodeStart >= matchEnd) {
-                currentPos = nodeEnd; continue;
-            }
-
-            if (!replaced) {
-                const beforeMatch = nodeStart < matchStart ? text.substring(0, matchStart - nodeStart) : '';
-                const afterMatch = nodeEnd > matchEnd ? text.substring(matchEnd - nodeStart) : '';
-                tNode.textContent = beforeMatch + newLabel + afterMatch;
-                replaced = true;
-            } else {
-                const afterMatch = nodeEnd > matchEnd ? text.substring(matchEnd - nodeStart) : '';
-                tNode.textContent = afterMatch;
+            if (nodeEnd > matchStart && nodeStart < matchEnd) {
+                if (firstIdx === -1) firstIdx = i;
+                lastIdx = i;
             }
             currentPos = nodeEnd;
+        }
+
+        if (firstIdx !== -1) {
+            currentPos = 0;
+            let beforeMatch = '';
+            let afterMatch = '';
+            for (let i = 0; i < ts.length; i++) {
+                const tNode = ts.item(i);
+                const text = tNode.textContent || '';
+                const nodeStart = currentPos;
+                const nodeEnd = currentPos + text.length;
+
+                if (i === firstIdx) {
+                    beforeMatch = nodeStart < matchStart ? text.substring(0, matchStart - nodeStart) : '';
+                }
+                if (i === lastIdx) {
+                    afterMatch = nodeEnd > matchEnd ? text.substring(matchEnd - nodeStart) : '';
+                }
+                currentPos = nodeEnd;
+            }
+
+            for (let i = firstIdx; i <= lastIdx; i++) {
+                ts.item(i).textContent = '';
+            }
+
+            ts.item(lastIdx).textContent = beforeMatch + newLabel + afterMatch;
         }
     }
 
@@ -362,11 +387,29 @@ export class DocxParserService {
             allKeys.push(variantKeys);
 
             if (i === 0) {
-                previewExamContent = mixedVariant.map((q, idx) => ({
-                    question: `Câu ${startQuestion + idx}: ${q.questionText.replace(/^(câu|question)\s*\d+\s*[:\.]\s*/i, '')}`,
-                    answers: q.answers.map((a, aIdx) => `${LETTERS[aIdx]}. ${a.text.replace(/^#?[A-D]\.\s*/i, '')}`),
-                    correctAnswer: LETTERS[q.answers.findIndex(a => a.isCorrect)]
-                }));
+                previewExamContent = mixedVariant.map((q, idx) => {
+                    const firstChar = q.answers?.[0]?.char;
+
+                    const isTF =
+                        typeof firstChar === 'string' &&
+                        firstChar >= 'a' &&
+                        firstChar <= 'z';
+
+                    const labels = isTF
+                        ? ['a', 'b', 'c', 'd']
+                        : ['A', 'B', 'C', 'D'];
+
+                    const sep = isTF ? ')' : '.';
+
+                    return {
+                        question: `Câu ${startQuestion + idx}: ${q.questionText.replace(/^(câu|question)\s*\d+\s*[:\.]\s*/i, '')}`,
+                        answers: q.answers.map((a, aIdx) =>
+                            `${labels[aIdx]}${sep} ${a.text.replace(/^#?[A-Da-d][\.\)]\s*/i, '')}`
+                        ),
+                        correctAnswer:
+                            labels[q.answers.findIndex(a => a.isCorrect)] || '?'
+                    };
+                });
             }
         }
 
@@ -480,8 +523,9 @@ export class DocxParserService {
                     const a = q.answers[i];
                     if (a.originalNode) {
                         const clonedANode = a.originalNode.cloneNode(true);
-                        const newLabel = `${LETTERS[i]}.`;
-                        this.updateLabel(clonedANode, /^\s*#?[A-D]\./i, newLabel);
+                        const isTF = a.char >= 'a' && a.char <= 'z';
+                        const newLabel = isTF ? `${['a', 'b', 'c', 'd'][i]})` : `${LETTERS[i]}.`;
+                        this.updateLabel(clonedANode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
                         this.removeRedColorAndUnderline(clonedANode);
                         bodyNode.insertBefore(clonedANode, insertAnchor);
                     }
