@@ -1,3 +1,4 @@
+import 'multer';
 import { Controller, Post, UseInterceptors, UploadedFile, BadRequestException, Res, Header, Body } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { DocxParserService } from './docx-parser.service';
@@ -16,6 +17,8 @@ export class DocxParserController {
         @Body('numExams') numExams: string = '4',
         @Body('startCode') startCode: string = '101',
         @Body('startQuestion') startQuestion: string = '1',
+        @Body('useHeader') useHeader: string = 'true',
+        @Body('useFooter') useFooter: string = 'true',
         @Body('department') department: string = 'SỞ GD&ĐT...',
         @Body('school') school: string = 'TRƯỜNG THPT...',
         @Body('examName') examName: string = 'KIỂM TRA CUỐI KÌ I',
@@ -38,7 +41,11 @@ export class DocxParserController {
         const sCode = parseInt(startCode, 10);
         const sQuestion = parseInt(startQuestion, 10);
 
-        const headerInfo = { department, school, examName, schoolYear, subject, duration };
+        const headerInfo = {
+            useHeader: useHeader === 'true',
+            useFooter: useFooter === 'true',
+            department, school, examName, schoolYear, subject, duration
+        };
 
         await this.docxParserService.generateMultipleExamsZip(file.buffer, nExams, sCode, sQuestion, headerInfo, archive);
 

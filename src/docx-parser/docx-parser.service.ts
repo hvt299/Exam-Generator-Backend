@@ -42,6 +42,8 @@ export interface Question {
 }
 
 export interface HeaderInfo {
+    useHeader: boolean;
+    useFooter: boolean;
     department: string;
     school: string;
     examName: string;
@@ -64,7 +66,7 @@ export class DocxParserService {
             }
 
             return docXmlEntry.getData().toString('utf8');
-        } catch (error) {
+        } catch (error: any) {
             throw new BadRequestException(`Lỗi khi đọc file DOCX: ${error.message}`);
         }
     }
@@ -97,7 +99,7 @@ export class DocxParserService {
                 paragraphs: validParagraphs,
                 paragraphCount: validParagraphs.length
             };
-        } catch (error) {
+        } catch (error: any) {
             throw new BadRequestException(`Lỗi khi parse XML sang DOM: ${error.message}`);
         }
     }
@@ -495,13 +497,35 @@ export class DocxParserService {
         const firstContentLine = classifiedLines.find(l => l.type === LineType.TAG || l.type === LineType.QUESTION);
         let insertAnchor = firstContentLine ? firstContentLine.node : bodyNode.getElementsByTagName('w:sectPr')[0];
 
-        const placeholder = docDom.createElement('w:p');
-        const rPlaceholder = docDom.createElement('w:r');
-        const tPlaceholder = docDom.createElement('w:t');
-        tPlaceholder.textContent = '###HEADER_PLACEHOLDER###';
-        rPlaceholder.appendChild(tPlaceholder);
-        placeholder.appendChild(rPlaceholder);
-        bodyNode.insertBefore(placeholder, insertAnchor);
+        if (headerInfo.useHeader) {
+            const placeholder = docDom.createElement('w:p');
+            const rPlaceholder = docDom.createElement('w:r');
+            const tPlaceholder = docDom.createElement('w:t');
+            tPlaceholder.textContent = '###HEADER_PLACEHOLDER###';
+            rPlaceholder.appendChild(tPlaceholder);
+            placeholder.appendChild(rPlaceholder);
+            bodyNode.insertBefore(placeholder, insertAnchor);
+        } else {
+            const maDeP = docDom.createElement('w:p');
+            const maDeR = docDom.createElement('w:r');
+            const maDeRPr = docDom.createElement('w:rPr');
+            const rFonts = docDom.createElement('w:rFonts');
+            rFonts.setAttribute('w:ascii', 'Times New Roman');
+            rFonts.setAttribute('w:hAnsi', 'Times New Roman');
+
+            const sz = docDom.createElement('w:sz');
+            sz.setAttribute('w:val', '26');
+            maDeRPr.appendChild(sz);
+
+            maDeRPr.appendChild(rFonts);
+            maDeRPr.appendChild(docDom.createElement('w:b'));
+            const maDeT = docDom.createElement('w:t');
+            maDeT.textContent = `Mã đề: ${examCode}`;
+            maDeR.appendChild(maDeRPr);
+            maDeR.appendChild(maDeT);
+            maDeP.appendChild(maDeR);
+            bodyNode.insertBefore(maDeP, insertAnchor);
+        }
 
         const LETTERS = ['A', 'B', 'C', 'D'];
         let questionIndex = startQuestion;
@@ -559,81 +583,83 @@ export class DocxParserService {
         let newXmlString = serializer.serializeToString(docDom);
         const safe = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-        const headerXml = `
-        <w:tbl>
-          <w:tblPr>
-            <w:tblW w:w="5000" w:type="pct"/>
-            <w:tblBorders>
-              <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-            </w:tblBorders>
-          </w:tblPr>
-          <w:tr>
-            <w:tc>
-              <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.department)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:u w:val="single"/></w:rPr><w:t>${safe(headerInfo.school)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>ĐỀ CHÍNH THỨC</w:t></w:r></w:p>
-            </w:tc>
-            <w:tc>
-              <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.examName)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.schoolYear)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>Môn: ${safe(headerInfo.subject)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/></w:rPr><w:t>Thời gian làm bài: ${safe(headerInfo.duration)}</w:t></w:r></w:p>
-            </w:tc>
-          </w:tr>
-        </w:tbl>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/></w:rPr><w:t>(Học sinh làm bài bằng cách chọn và tô kín một ô tròn trên Phiếu trả lời trắc nghiệm tương ứng với phương án trả lời đúng của mỗi câu.)</w:t></w:r></w:p>
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:tbl>
-          <w:tblPr>
-            <w:tblW w:w="5000" w:type="pct"/>
-            <w:tblBorders>
-              <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-            </w:tblBorders>
-          </w:tblPr>
-          <w:tr>
-             <w:tc>
-                <w:tcPr><w:tcW w:w="3800" w:type="pct"/></w:tcPr>
-                <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr><w:t>Họ và tên thí sinh: ..................................................... Lớp: .....................</w:t></w:r></w:p>
-                <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr><w:t>Số báo danh: ................................. Phòng số: .............. Trường: .....................</w:t></w:r></w:p>
-             </w:tc>
-             <w:tc>
-                <w:tcPr><w:tcW w:w="1200" w:type="pct"/></w:tcPr>
-                <w:p>
-                   <w:pPr>
-                      <w:pBdr>
-                         <w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/>
-                         <w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/>
-                      </w:pBdr>
-                      <w:jc w:val="center"/>
-                   </w:pPr>
-                   <w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>Mã đề: ${examCode}</w:t></w:r>
-                </w:p>
-             </w:tc>
-          </w:tr>
-        </w:tbl>
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>--------------------------------------------------------</w:t></w:r></w:p>
-        `;
+        if (headerInfo.useHeader) {
+            const headerXml = `
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="5000" w:type="pct"/>
+                <w:tblBorders>
+                  <w:top w:val="none" w:sz="0"/><w:left w:val="none" w:sz="0"/><w:bottom w:val="none" w:sz="0"/><w:right w:val="none" w:sz="0"/>
+                  <w:insideH w:val="none" w:sz="0"/><w:insideV w:val="none" w:sz="0"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tr>
+                <w:tc>
+                  <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.department)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:u w:val="single"/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.school)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>ĐỀ CHÍNH THỨC</w:t></w:r></w:p>
+                </w:tc>
+                <w:tc>
+                  <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.examName)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.schoolYear)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>Môn: ${safe(headerInfo.subject)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/><w:sz w:val="24"/></w:rPr><w:t>Thời gian làm bài: ${safe(headerInfo.duration)}</w:t></w:r></w:p>
+                </w:tc>
+              </w:tr>
+            </w:tbl>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/><w:sz w:val="22"/></w:rPr><w:t>(Học sinh làm bài bằng cách chọn và tô kín một ô tròn trên Phiếu trả lời trắc nghiệm tương ứng với phương án trả lời đúng của mỗi câu.)</w:t></w:r></w:p>
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="5000" w:type="pct"/>
+                <w:tblBorders>
+                  <w:top w:val="none" w:sz="0"/><w:left w:val="none" w:sz="0"/><w:bottom w:val="none" w:sz="0"/><w:right w:val="none" w:sz="0"/>
+                  <w:insideH w:val="none" w:sz="0"/><w:insideV w:val="none" w:sz="0"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tr>
+                 <w:tc>
+                    <w:tcPr><w:tcW w:w="3800" w:type="pct"/></w:tcPr>
+                    <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>Họ và tên thí sinh: ..................................................... Lớp: .....................</w:t></w:r></w:p>
+                    <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>Số báo danh: ................................. Phòng số: .............. Trường: .....................</w:t></w:r></w:p>
+                 </w:tc>
+                 <w:tc>
+                    <w:tcPr><w:tcW w:w="1200" w:type="pct"/></w:tcPr>
+                    <w:p>
+                       <w:pPr>
+                          <w:pBdr>
+                             <w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/>
+                             <w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/>
+                          </w:pBdr>
+                          <w:jc w:val="center"/>
+                       </w:pPr>
+                       <w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>Mã đề: ${examCode}</w:t></w:r>
+                    </w:p>
+                 </w:tc>
+              </w:tr>
+            </w:tbl>
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>--------------------------------------------------------</w:t></w:r></w:p>
+            `;
 
-        const footerXml = `
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>------------- HẾT -------------</w:t></w:r></w:p>
-        `;
+            newXmlString = newXmlString.replace(/<w:p[^>]*>.*?###HEADER_PLACEHOLDER###.*?<\/w:p>/, headerXml);
+        }
 
-        newXmlString = newXmlString.replace(/<w:p[^>]*>.*?###HEADER_PLACEHOLDER###.*?<\/w:p>/, headerXml);
+        if (headerInfo.useFooter) {
+            const footerXml = `
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="26"/></w:rPr><w:t>------------- HẾT -------------</w:t></w:r></w:p>
+            `;
 
-        const sectPrIdx = newXmlString.lastIndexOf('<w:sectPr');
-        if (sectPrIdx !== -1) {
-            newXmlString = newXmlString.slice(0, sectPrIdx) + footerXml + newXmlString.slice(sectPrIdx);
-        } else {
-            const bodyEndIdx = newXmlString.lastIndexOf('</w:body>');
-            newXmlString = newXmlString.slice(0, bodyEndIdx) + footerXml + newXmlString.slice(bodyEndIdx);
+            const sectPrIdx = newXmlString.lastIndexOf('<w:sectPr');
+            if (sectPrIdx !== -1) {
+                newXmlString = newXmlString.slice(0, sectPrIdx) + footerXml + newXmlString.slice(sectPrIdx);
+            } else {
+                const bodyEndIdx = newXmlString.lastIndexOf('</w:body>');
+                newXmlString = newXmlString.slice(0, bodyEndIdx) + footerXml + newXmlString.slice(bodyEndIdx);
+            }
         }
 
         const zip = new AdmZip(fileBuffer);
