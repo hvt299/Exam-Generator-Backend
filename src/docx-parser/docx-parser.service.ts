@@ -490,6 +490,61 @@ export class DocxParserService {
         return mixedExam;
     }
 
+    private mergeMultipleAnswers(docDom: any, answers: Answer[], startIndex: number, count: number, tabPositions: number[]) {
+        const LETTERS = ['A', 'B', 'C', 'D'];
+
+        const baseNode = answers[startIndex].originalNode.cloneNode(true);
+        let a = answers[startIndex];
+        let isTF = a.char >= 'a' && a.char <= 'z';
+        let newLabel = isTF ? `${['a', 'b', 'c', 'd'][startIndex]})` : `${LETTERS[startIndex]}.`;
+        this.updateLabel(baseNode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+        this.removeRedColorAndUnderline(baseNode);
+
+        let pPr = baseNode.getElementsByTagName('w:pPr')[0];
+        if (!pPr) {
+            pPr = docDom.createElement('w:pPr');
+            baseNode.insertBefore(pPr, baseNode.firstChild);
+        }
+
+        const oldTabsList = pPr.getElementsByTagName('w:tabs');
+        for (let i = oldTabsList.length - 1; i >= 0; i--) pPr.removeChild(oldTabsList.item(i));
+
+        if (tabPositions.length > 0) {
+            const tabsNode = docDom.createElement('w:tabs');
+            for (const pos of tabPositions) {
+                const tabNode = docDom.createElement('w:tab');
+                tabNode.setAttribute('w:val', 'left');
+                tabNode.setAttribute('w:pos', pos.toString());
+                tabsNode.appendChild(tabNode);
+            }
+            pPr.appendChild(tabsNode);
+        }
+
+        for (let i = 1; i < count; i++) {
+            const currIdx = startIndex + i;
+            const currAnswer = answers[currIdx];
+            const currNode = currAnswer.originalNode.cloneNode(true);
+
+            isTF = currAnswer.char >= 'a' && currAnswer.char <= 'z';
+            newLabel = isTF ? `${['a', 'b', 'c', 'd'][currIdx]})` : `${LETTERS[currIdx]}.`;
+            this.updateLabel(currNode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+            this.removeRedColorAndUnderline(currNode);
+
+            const tabRun = docDom.createElement('w:r');
+            tabRun.appendChild(docDom.createElement('w:tab'));
+            baseNode.appendChild(tabRun);
+
+            const children: any[] = [];
+            for (let c = 0; c < currNode.childNodes.length; c++) {
+                const child = currNode.childNodes.item(c);
+                if (child.nodeName !== 'w:pPr') children.push(child);
+            }
+            for (const child of children) baseNode.appendChild(child);
+        }
+
+        return baseNode;
+    }
+
     buildFinalDocx(fileBuffer: Buffer, docDom: any, classifiedLines: ClassifiedLine[], shuffledQuestions: Question[], startQuestion: number, examCode: number, headerInfo: HeaderInfo): Buffer {
         const bodyNode = docDom.getElementsByTagName('w:body')[0];
 
@@ -543,15 +598,35 @@ export class DocxParserService {
             const uniqueAnswerNodesArray = Array.from(new Set(q.answers.map(a => a.originalNode)));
 
             if (uniqueAnswerNodesArray.length === q.answers.length) {
-                for (let i = 0; i < q.answers.length; i++) {
-                    const a = q.answers[i];
-                    if (a.originalNode) {
-                        const clonedANode = a.originalNode.cloneNode(true);
-                        const isTF = a.char >= 'a' && a.char <= 'z';
-                        const newLabel = isTF ? `${['a', 'b', 'c', 'd'][i]})` : `${LETTERS[i]}.`;
-                        this.updateLabel(clonedANode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
-                        this.removeRedColorAndUnderline(clonedANode);
-                        bodyNode.insertBefore(clonedANode, insertAnchor);
+                let layoutCols = 1;
+
+                if (q.answers.length === 4) {
+                    const maxLen = Math.max(...q.answers.map(a => a.text.trim().length));
+                    if (maxLen <= 15) layoutCols = 4;
+                    else if (maxLen <= 40) layoutCols = 2;
+                }
+
+                if (layoutCols === 4) {
+                    const mergedRow = this.mergeMultipleAnswers(docDom, q.answers, 0, 4, [2250, 4500, 6750]);
+                    bodyNode.insertBefore(mergedRow, insertAnchor);
+                }
+                else if (layoutCols === 2) {
+                    const row1 = this.mergeMultipleAnswers(docDom, q.answers, 0, 2, [4500]);
+                    const row2 = this.mergeMultipleAnswers(docDom, q.answers, 2, 2, [4500]);
+                    bodyNode.insertBefore(row1, insertAnchor);
+                    bodyNode.insertBefore(row2, insertAnchor);
+                }
+                else {
+                    for (let i = 0; i < q.answers.length; i++) {
+                        const a = q.answers[i];
+                        if (a.originalNode) {
+                            const clonedANode = a.originalNode.cloneNode(true);
+                            const isTF = a.char >= 'a' && a.char <= 'z';
+                            const newLabel = isTF ? `${['a', 'b', 'c', 'd'][i]})` : `${LETTERS[i]}.`;
+                            this.updateLabel(clonedANode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+                            this.removeRedColorAndUnderline(clonedANode);
+                            bodyNode.insertBefore(clonedANode, insertAnchor);
+                        }
                     }
                 }
             } else {
