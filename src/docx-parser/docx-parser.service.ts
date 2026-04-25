@@ -42,6 +42,8 @@ export interface Question {
 }
 
 export interface HeaderInfo {
+    useHeader: boolean;
+    useFooter: boolean;
     department: string;
     school: string;
     examName: string;
@@ -64,7 +66,7 @@ export class DocxParserService {
             }
 
             return docXmlEntry.getData().toString('utf8');
-        } catch (error) {
+        } catch (error: any) {
             throw new BadRequestException(`Lỗi khi đọc file DOCX: ${error.message}`);
         }
     }
@@ -97,7 +99,7 @@ export class DocxParserService {
                 paragraphs: validParagraphs,
                 paragraphCount: validParagraphs.length
             };
-        } catch (error) {
+        } catch (error: any) {
             throw new BadRequestException(`Lỗi khi parse XML sang DOM: ${error.message}`);
         }
     }
@@ -363,33 +365,51 @@ export class DocxParserService {
         if (chars.length !== uniqueChars.size) {
             errors.push(`[${qTitle}] Có đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A).`);
         }
-        if (q.answers.length !== 4) {
+
+        const isPart3ShortAnswer = q.answers.length === 1 && chars[0].toUpperCase() === 'A';
+
+        if (!isPart3ShortAnswer && q.answers.length !== 4) {
             errors.push(`[${qTitle}] Tìm thấy ${q.answers.length} đáp án thay vì 4. Hãy kiểm tra lại ngắt dòng.`);
         }
-        if (!q.answers.some(a => a.isCorrect)) {
+        if (!isPart3ShortAnswer && !q.answers.some(a => a.isCorrect)) {
             errors.push(`[${qTitle}] Chưa đánh dấu đáp án đúng (cần bôi đỏ hoặc gạch chân).`);
         }
     }
 
-    async previewExams(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number) {
-        const rawXml = this.extractDocumentXml(fileBuffer);
-        const domResult = this.parseXmlToDom(rawXml);
-        const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+    async previewExams(fileBuffers: Buffer[], numExams: number, startCode: number, startQuestion: number) {
+        const allErrors: string[] = [];
+        const baseDatas: { rawXml: string; questions: Question[] }[] = [];
 
-        const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+        for (let fIdx = 0; fIdx < fileBuffers.length; fIdx++) {
+            const buffer = fileBuffers[fIdx];
+            const rawXml = this.extractDocumentXml(buffer);
+            const domResult = this.parseXmlToDom(rawXml);
+            const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { questions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
 
-        if (errors.length > 0) {
-            return { success: false, errors };
+            if (errors.length > 0) {
+                allErrors.push(...errors.map(e => `[Đề gốc số ${fIdx + 1}] ${e}`));
+            } else {
+                baseDatas.push({ rawXml, questions });
+            }
+        }
+
+        if (allErrors.length > 0) {
+            return { success: false, errors: allErrors };
         }
 
         const allKeys: string[][] = [];
         let previewExamContent: any[] = [];
 
         for (let i = 0; i < numExams; i++) {
-            const mixedVariant = this.generateExamVariant(baseQuestions);
+            const baseIdx = i % baseDatas.length;
+            const mixedVariant = this.generateExamVariant(baseDatas[baseIdx].questions);
             const LETTERS = ['A', 'B', 'C', 'D'];
 
             const variantKeys = mixedVariant.map(q => {
+                if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
+                    return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
             });
@@ -398,16 +418,8 @@ export class DocxParserService {
             if (i === 0) {
                 previewExamContent = mixedVariant.map((q, idx) => {
                     const firstChar = q.answers?.[0]?.char;
-
-                    const isTF =
-                        typeof firstChar === 'string' &&
-                        firstChar >= 'a' &&
-                        firstChar <= 'z';
-
-                    const labels = isTF
-                        ? ['a', 'b', 'c', 'd']
-                        : ['A', 'B', 'C', 'D'];
-
+                    const isTF = typeof firstChar === 'string' && firstChar >= 'a' && firstChar <= 'z';
+                    const labels = isTF ? ['a', 'b', 'c', 'd'] : ['A', 'B', 'C', 'D'];
                     const sep = isTF ? ')' : '.';
 
                     return {
@@ -415,18 +427,13 @@ export class DocxParserService {
                         answers: q.answers.map((a, aIdx) =>
                             `${labels[aIdx]}${sep} ${a.text.replace(/^#?[A-Da-d][\.\)]\s*/i, '')}`
                         ),
-                        correctAnswer:
-                            labels[q.answers.findIndex(a => a.isCorrect)] || '?'
+                        correctAnswer: labels[q.answers.findIndex(a => a.isCorrect)] || '?'
                     };
                 });
             }
         }
 
-        return {
-            success: true,
-            matrix: allKeys,
-            previewExam: previewExamContent
-        };
+        return { success: true, matrix: allKeys, previewExam: previewExamContent };
     }
 
     private shuffleArray<T>(array: T[]): T[] {
@@ -489,19 +496,96 @@ export class DocxParserService {
         return mixedExam;
     }
 
+    private mergeMultipleAnswers(docDom: any, answers: Answer[], startIndex: number, count: number, tabPositions: number[]) {
+        const LETTERS = ['A', 'B', 'C', 'D'];
+
+        const baseNode = answers[startIndex].originalNode.cloneNode(true);
+        let a = answers[startIndex];
+        let isTF = a.char >= 'a' && a.char <= 'z';
+        let newLabel = isTF ? `${['a', 'b', 'c', 'd'][startIndex]})` : `${LETTERS[startIndex]}.`;
+        this.updateLabel(baseNode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+        this.removeRedColorAndUnderline(baseNode);
+
+        let pPr = baseNode.getElementsByTagName('w:pPr')[0];
+        if (!pPr) {
+            pPr = docDom.createElement('w:pPr');
+            baseNode.insertBefore(pPr, baseNode.firstChild);
+        }
+
+        const oldTabsList = pPr.getElementsByTagName('w:tabs');
+        for (let i = oldTabsList.length - 1; i >= 0; i--) pPr.removeChild(oldTabsList.item(i));
+
+        if (tabPositions.length > 0) {
+            const tabsNode = docDom.createElement('w:tabs');
+            for (const pos of tabPositions) {
+                const tabNode = docDom.createElement('w:tab');
+                tabNode.setAttribute('w:val', 'left');
+                tabNode.setAttribute('w:pos', pos.toString());
+                tabsNode.appendChild(tabNode);
+            }
+            pPr.appendChild(tabsNode);
+        }
+
+        for (let i = 1; i < count; i++) {
+            const currIdx = startIndex + i;
+            const currAnswer = answers[currIdx];
+            const currNode = currAnswer.originalNode.cloneNode(true);
+
+            isTF = currAnswer.char >= 'a' && currAnswer.char <= 'z';
+            newLabel = isTF ? `${['a', 'b', 'c', 'd'][currIdx]})` : `${LETTERS[currIdx]}.`;
+            this.updateLabel(currNode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+            this.removeRedColorAndUnderline(currNode);
+
+            const tabRun = docDom.createElement('w:r');
+            tabRun.appendChild(docDom.createElement('w:tab'));
+            baseNode.appendChild(tabRun);
+
+            const children: any[] = [];
+            for (let c = 0; c < currNode.childNodes.length; c++) {
+                const child = currNode.childNodes.item(c);
+                if (child.nodeName !== 'w:pPr') children.push(child);
+            }
+            for (const child of children) baseNode.appendChild(child);
+        }
+
+        return baseNode;
+    }
+
     buildFinalDocx(fileBuffer: Buffer, docDom: any, classifiedLines: ClassifiedLine[], shuffledQuestions: Question[], startQuestion: number, examCode: number, headerInfo: HeaderInfo): Buffer {
         const bodyNode = docDom.getElementsByTagName('w:body')[0];
 
         const firstContentLine = classifiedLines.find(l => l.type === LineType.TAG || l.type === LineType.QUESTION);
         let insertAnchor = firstContentLine ? firstContentLine.node : bodyNode.getElementsByTagName('w:sectPr')[0];
 
-        const placeholder = docDom.createElement('w:p');
-        const rPlaceholder = docDom.createElement('w:r');
-        const tPlaceholder = docDom.createElement('w:t');
-        tPlaceholder.textContent = '###HEADER_PLACEHOLDER###';
-        rPlaceholder.appendChild(tPlaceholder);
-        placeholder.appendChild(rPlaceholder);
-        bodyNode.insertBefore(placeholder, insertAnchor);
+        if (headerInfo.useHeader) {
+            const placeholder = docDom.createElement('w:p');
+            const rPlaceholder = docDom.createElement('w:r');
+            const tPlaceholder = docDom.createElement('w:t');
+            tPlaceholder.textContent = '###HEADER_PLACEHOLDER###';
+            rPlaceholder.appendChild(tPlaceholder);
+            placeholder.appendChild(rPlaceholder);
+            bodyNode.insertBefore(placeholder, insertAnchor);
+        } else {
+            const maDeP = docDom.createElement('w:p');
+            const maDeR = docDom.createElement('w:r');
+            const maDeRPr = docDom.createElement('w:rPr');
+            const rFonts = docDom.createElement('w:rFonts');
+            rFonts.setAttribute('w:ascii', 'Times New Roman');
+            rFonts.setAttribute('w:hAnsi', 'Times New Roman');
+
+            const sz = docDom.createElement('w:sz');
+            sz.setAttribute('w:val', '26');
+            maDeRPr.appendChild(sz);
+
+            maDeRPr.appendChild(rFonts);
+            maDeRPr.appendChild(docDom.createElement('w:b'));
+            const maDeT = docDom.createElement('w:t');
+            maDeT.textContent = `Mã đề: ${examCode}`;
+            maDeR.appendChild(maDeRPr);
+            maDeR.appendChild(maDeT);
+            maDeP.appendChild(maDeR);
+            bodyNode.insertBefore(maDeP, insertAnchor);
+        }
 
         const LETTERS = ['A', 'B', 'C', 'D'];
         let questionIndex = startQuestion;
@@ -520,15 +604,35 @@ export class DocxParserService {
             const uniqueAnswerNodesArray = Array.from(new Set(q.answers.map(a => a.originalNode)));
 
             if (uniqueAnswerNodesArray.length === q.answers.length) {
-                for (let i = 0; i < q.answers.length; i++) {
-                    const a = q.answers[i];
-                    if (a.originalNode) {
-                        const clonedANode = a.originalNode.cloneNode(true);
-                        const isTF = a.char >= 'a' && a.char <= 'z';
-                        const newLabel = isTF ? `${['a', 'b', 'c', 'd'][i]})` : `${LETTERS[i]}.`;
-                        this.updateLabel(clonedANode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
-                        this.removeRedColorAndUnderline(clonedANode);
-                        bodyNode.insertBefore(clonedANode, insertAnchor);
+                let layoutCols = 1;
+
+                if (q.answers.length === 4) {
+                    const maxLen = Math.max(...q.answers.map(a => a.text.trim().length));
+                    if (maxLen <= 15) layoutCols = 4;
+                    else if (maxLen <= 40) layoutCols = 2;
+                }
+
+                if (layoutCols === 4) {
+                    const mergedRow = this.mergeMultipleAnswers(docDom, q.answers, 0, 4, [2250, 4500, 6750]);
+                    bodyNode.insertBefore(mergedRow, insertAnchor);
+                }
+                else if (layoutCols === 2) {
+                    const row1 = this.mergeMultipleAnswers(docDom, q.answers, 0, 2, [4500]);
+                    const row2 = this.mergeMultipleAnswers(docDom, q.answers, 2, 2, [4500]);
+                    bodyNode.insertBefore(row1, insertAnchor);
+                    bodyNode.insertBefore(row2, insertAnchor);
+                }
+                else {
+                    for (let i = 0; i < q.answers.length; i++) {
+                        const a = q.answers[i];
+                        if (a.originalNode) {
+                            const clonedANode = a.originalNode.cloneNode(true);
+                            const isTF = a.char >= 'a' && a.char <= 'z';
+                            const newLabel = isTF ? `${['a', 'b', 'c', 'd'][i]})` : `${LETTERS[i]}.`;
+                            this.updateLabel(clonedANode, /^\s*#?[A-Da-d][\.\)]/i, newLabel);
+                            this.removeRedColorAndUnderline(clonedANode);
+                            bodyNode.insertBefore(clonedANode, insertAnchor);
+                        }
                     }
                 }
             } else {
@@ -559,81 +663,83 @@ export class DocxParserService {
         let newXmlString = serializer.serializeToString(docDom);
         const safe = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-        const headerXml = `
-        <w:tbl>
-          <w:tblPr>
-            <w:tblW w:w="5000" w:type="pct"/>
-            <w:tblBorders>
-              <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-            </w:tblBorders>
-          </w:tblPr>
-          <w:tr>
-            <w:tc>
-              <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.department)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:u w:val="single"/></w:rPr><w:t>${safe(headerInfo.school)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>ĐỀ CHÍNH THỨC</w:t></w:r></w:p>
-            </w:tc>
-            <w:tc>
-              <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.examName)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>${safe(headerInfo.schoolYear)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>Môn: ${safe(headerInfo.subject)}</w:t></w:r></w:p>
-              <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/></w:rPr><w:t>Thời gian làm bài: ${safe(headerInfo.duration)}</w:t></w:r></w:p>
-            </w:tc>
-          </w:tr>
-        </w:tbl>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/></w:rPr><w:t>(Học sinh làm bài bằng cách chọn và tô kín một ô tròn trên Phiếu trả lời trắc nghiệm tương ứng với phương án trả lời đúng của mỗi câu.)</w:t></w:r></w:p>
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:tbl>
-          <w:tblPr>
-            <w:tblW w:w="5000" w:type="pct"/>
-            <w:tblBorders>
-              <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-              <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/><w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
-            </w:tblBorders>
-          </w:tblPr>
-          <w:tr>
-             <w:tc>
-                <w:tcPr><w:tcW w:w="3800" w:type="pct"/></w:tcPr>
-                <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr><w:t>Họ và tên thí sinh: ..................................................... Lớp: .....................</w:t></w:r></w:p>
-                <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/></w:rPr><w:t>Số báo danh: ................................. Phòng số: .............. Trường: .....................</w:t></w:r></w:p>
-             </w:tc>
-             <w:tc>
-                <w:tcPr><w:tcW w:w="1200" w:type="pct"/></w:tcPr>
-                <w:p>
-                   <w:pPr>
-                      <w:pBdr>
-                         <w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/>
-                         <w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/>
-                      </w:pBdr>
-                      <w:jc w:val="center"/>
-                   </w:pPr>
-                   <w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>Mã đề: ${examCode}</w:t></w:r>
-                </w:p>
-             </w:tc>
-          </w:tr>
-        </w:tbl>
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>--------------------------------------------------------</w:t></w:r></w:p>
-        `;
+        if (headerInfo.useHeader) {
+            const headerXml = `
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="5000" w:type="pct"/>
+                <w:tblBorders>
+                  <w:top w:val="none" w:sz="0"/><w:left w:val="none" w:sz="0"/><w:bottom w:val="none" w:sz="0"/><w:right w:val="none" w:sz="0"/>
+                  <w:insideH w:val="none" w:sz="0"/><w:insideV w:val="none" w:sz="0"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tr>
+                <w:tc>
+                  <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.department)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:u w:val="single"/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.school)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>ĐỀ CHÍNH THỨC</w:t></w:r></w:p>
+                </w:tc>
+                <w:tc>
+                  <w:tcPr><w:tcW w:w="2500" w:type="pct"/></w:tcPr>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.examName)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>${safe(headerInfo.schoolYear)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="24"/></w:rPr><w:t>Môn: ${safe(headerInfo.subject)}</w:t></w:r></w:p>
+                  <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/><w:sz w:val="24"/></w:rPr><w:t>Thời gian làm bài: ${safe(headerInfo.duration)}</w:t></w:r></w:p>
+                </w:tc>
+              </w:tr>
+            </w:tbl>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:i/><w:sz w:val="22"/></w:rPr><w:t>(Học sinh làm bài bằng cách chọn và tô kín một ô tròn trên Phiếu trả lời trắc nghiệm tương ứng với phương án trả lời đúng của mỗi câu.)</w:t></w:r></w:p>
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:tbl>
+              <w:tblPr>
+                <w:tblW w:w="5000" w:type="pct"/>
+                <w:tblBorders>
+                  <w:top w:val="none" w:sz="0"/><w:left w:val="none" w:sz="0"/><w:bottom w:val="none" w:sz="0"/><w:right w:val="none" w:sz="0"/>
+                  <w:insideH w:val="none" w:sz="0"/><w:insideV w:val="none" w:sz="0"/>
+                </w:tblBorders>
+              </w:tblPr>
+              <w:tr>
+                 <w:tc>
+                    <w:tcPr><w:tcW w:w="3800" w:type="pct"/></w:tcPr>
+                    <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>Họ và tên thí sinh: ..................................................... Lớp: .....................</w:t></w:r></w:p>
+                    <w:p><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:sz w:val="22"/></w:rPr><w:t>Số báo danh: ................................. Phòng số: .............. Trường: .....................</w:t></w:r></w:p>
+                 </w:tc>
+                 <w:tc>
+                    <w:tcPr><w:tcW w:w="1200" w:type="pct"/></w:tcPr>
+                    <w:p>
+                       <w:pPr>
+                          <w:pBdr>
+                             <w:top w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:left w:val="single" w:sz="6" w:space="1" w:color="auto"/>
+                             <w:bottom w:val="single" w:sz="6" w:space="1" w:color="auto"/><w:right w:val="single" w:sz="6" w:space="1" w:color="auto"/>
+                          </w:pBdr>
+                          <w:jc w:val="center"/>
+                       </w:pPr>
+                       <w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="28"/></w:rPr><w:t>Mã đề: ${examCode}</w:t></w:r>
+                    </w:p>
+                 </w:tc>
+              </w:tr>
+            </w:tbl>
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>--------------------------------------------------------</w:t></w:r></w:p>
+            `;
 
-        const footerXml = `
-        <w:p><w:r><w:t></w:t></w:r></w:p>
-        <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/></w:rPr><w:t>------------- HẾT -------------</w:t></w:r></w:p>
-        `;
+            newXmlString = newXmlString.replace(/<w:p[^>]*>.*?###HEADER_PLACEHOLDER###.*?<\/w:p>/, headerXml);
+        }
 
-        newXmlString = newXmlString.replace(/<w:p[^>]*>.*?###HEADER_PLACEHOLDER###.*?<\/w:p>/, headerXml);
+        if (headerInfo.useFooter) {
+            const footerXml = `
+            <w:p><w:r><w:t></w:t></w:r></w:p>
+            <w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/><w:b/><w:sz w:val="26"/></w:rPr><w:t>------------- HẾT -------------</w:t></w:r></w:p>
+            `;
 
-        const sectPrIdx = newXmlString.lastIndexOf('<w:sectPr');
-        if (sectPrIdx !== -1) {
-            newXmlString = newXmlString.slice(0, sectPrIdx) + footerXml + newXmlString.slice(sectPrIdx);
-        } else {
-            const bodyEndIdx = newXmlString.lastIndexOf('</w:body>');
-            newXmlString = newXmlString.slice(0, bodyEndIdx) + footerXml + newXmlString.slice(bodyEndIdx);
+            const sectPrIdx = newXmlString.lastIndexOf('<w:sectPr');
+            if (sectPrIdx !== -1) {
+                newXmlString = newXmlString.slice(0, sectPrIdx) + footerXml + newXmlString.slice(sectPrIdx);
+            } else {
+                const bodyEndIdx = newXmlString.lastIndexOf('</w:body>');
+                newXmlString = newXmlString.slice(0, bodyEndIdx) + footerXml + newXmlString.slice(bodyEndIdx);
+            }
         }
 
         const zip = new AdmZip(fileBuffer);
@@ -642,8 +748,19 @@ export class DocxParserService {
         return zip.toBuffer();
     }
 
-    async generateMultipleExamsZip(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number, headerInfo: HeaderInfo, archive: archiver.Archiver) {
-        const rawXml = this.extractDocumentXml(fileBuffer);
+    async generateMultipleExamsZip(fileBuffers: Buffer[], numExams: number, startCode: number, startQuestion: number, headerInfo: HeaderInfo, archive: archiver.Archiver) {
+        const baseDatas: { buffer: Buffer; rawXml: string }[] = [];
+
+        for (let fIdx = 0; fIdx < fileBuffers.length; fIdx++) {
+            const buffer = fileBuffers[fIdx];
+            const rawXml = this.extractDocumentXml(buffer);
+            const domResult = this.parseXmlToDom(rawXml);
+            const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+
+            if (errors.length > 0) throw new BadRequestException(`[Đề gốc số ${fIdx + 1}] có lỗi:\n` + errors.join('\n'));
+            baseDatas.push({ buffer, rawXml });
+        }
 
         const workbook = new ExcelJS.Workbook();
         const sheet = workbook.addWorksheet('Đáp Án');
@@ -658,22 +775,27 @@ export class DocxParserService {
 
         for (let i = 0; i < numExams; i++) {
             const currentCode = Number(startCode) + i;
-            const domResult = this.parseXmlToDom(rawXml);
+
+            const baseIdx = i % baseDatas.length;
+            const baseData = baseDatas[baseIdx];
+
+            const domResult = this.parseXmlToDom(baseData.rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { questions } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
 
-            const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
-            if (errors.length > 0) throw new BadRequestException('File đề thi có lỗi định dạng:\n' + errors.join('\n'));
-
-            const mixedVariant = this.generateExamVariant(baseQuestions);
+            const mixedVariant = this.generateExamVariant(questions);
 
             const LETTERS = ['A', 'B', 'C', 'D'];
             const variantKeys = mixedVariant.map(q => {
+                if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
+                    return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
             });
             allKeys.push(variantKeys);
 
-            const buffer = this.buildFinalDocx(fileBuffer, domResult.docDom, classifiedLines, mixedVariant, startQuestion, currentCode, headerInfo);
+            const buffer = this.buildFinalDocx(baseData.buffer, domResult.docDom, classifiedLines, mixedVariant, startQuestion, currentCode, headerInfo);
             archive.append(buffer, { name: `Ma_de_${currentCode}.docx` });
         }
 

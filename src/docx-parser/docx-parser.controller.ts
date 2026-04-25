@@ -1,5 +1,6 @@
-import { Controller, Post, UseInterceptors, UploadedFile, BadRequestException, Res, Header, Body } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import 'multer';
+import { Controller, Post, UseInterceptors, UploadedFiles, BadRequestException, Res, Body } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
 import { DocxParserService } from './docx-parser.service';
 import type { Response } from 'express';
 import type { Express } from 'express';
@@ -10,12 +11,14 @@ export class DocxParserController {
     constructor(private readonly docxParserService: DocxParserService) { }
 
     @Post('mix-multi')
-    @UseInterceptors(FileInterceptor('file'))
+    @UseInterceptors(FilesInterceptor('files'))
     async uploadAndMixMultiDocx(
-        @UploadedFile() file: Express.Multer.File,
+        @UploadedFiles() files: Array<Express.Multer.File>,
         @Body('numExams') numExams: string = '4',
         @Body('startCode') startCode: string = '101',
         @Body('startQuestion') startQuestion: string = '1',
+        @Body('useHeader') useHeader: string = 'true',
+        @Body('useFooter') useFooter: string = 'true',
         @Body('department') department: string = 'SỞ GD&ĐT...',
         @Body('school') school: string = 'TRƯỜNG THPT...',
         @Body('examName') examName: string = 'KIỂM TRA CUỐI KÌ I',
@@ -24,8 +27,11 @@ export class DocxParserController {
         @Body('duration') duration: string = '90 phút',
         @Res() res: Response
     ) {
-        if (!file || !file.originalname.endsWith('.docx')) {
-            throw new BadRequestException('Vui lòng upload file .docx');
+        if (!files || files.length === 0) {
+            throw new BadRequestException('Vui lòng upload ít nhất 1 file đề gốc (.docx)');
+        }
+        for (const file of files) {
+            if (!file.originalname.endsWith('.docx')) throw new BadRequestException(`File ${file.originalname} không đúng định dạng .docx`);
         }
 
         res.setHeader('Content-Type', 'application/zip');
@@ -38,29 +44,38 @@ export class DocxParserController {
         const sCode = parseInt(startCode, 10);
         const sQuestion = parseInt(startQuestion, 10);
 
-        const headerInfo = { department, school, examName, schoolYear, subject, duration };
+        const headerInfo = {
+            useHeader: useHeader === 'true',
+            useFooter: useFooter === 'true',
+            department, school, examName, schoolYear, subject, duration
+        };
 
-        await this.docxParserService.generateMultipleExamsZip(file.buffer, nExams, sCode, sQuestion, headerInfo, archive);
+        const fileBuffers = files.map(f => f.buffer);
+        await this.docxParserService.generateMultipleExamsZip(fileBuffers, nExams, sCode, sQuestion, headerInfo, archive);
 
         await archive.finalize();
     }
 
     @Post('preview')
-    @UseInterceptors(FileInterceptor('file'))
+    @UseInterceptors(FilesInterceptor('files'))
     async previewExamData(
-        @UploadedFile() file: Express.Multer.File,
+        @UploadedFiles() files: Array<Express.Multer.File>,
         @Body('numExams') numExams: string = '4',
         @Body('startCode') startCode: string = '101',
         @Body('startQuestion') startQuestion: string = '1',
     ) {
-        if (!file || !file.originalname.endsWith('.docx')) {
-            throw new BadRequestException('Vui lòng upload file .docx');
+        if (!files || files.length === 0) {
+            throw new BadRequestException('Vui lòng upload ít nhất 1 file đề gốc (.docx)');
+        }
+        for (const file of files) {
+            if (!file.originalname.endsWith('.docx')) throw new BadRequestException(`File ${file.originalname} không đúng định dạng .docx`);
         }
 
         const nExams = parseInt(numExams, 10);
         const sCode = parseInt(startCode, 10);
         const sQuestion = parseInt(startQuestion, 10);
 
-        return await this.docxParserService.previewExams(file.buffer, nExams, sCode, sQuestion);
+        const fileBuffers = files.map(f => f.buffer);
+        return await this.docxParserService.previewExams(fileBuffers, nExams, sCode, sQuestion);
     }
 }
