@@ -373,22 +373,34 @@ export class DocxParserService {
         }
     }
 
-    async previewExams(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number) {
-        const rawXml = this.extractDocumentXml(fileBuffer);
-        const domResult = this.parseXmlToDom(rawXml);
-        const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+    async previewExams(fileBuffers: Buffer[], numExams: number, startCode: number, startQuestion: number) {
+        const allErrors: string[] = [];
+        const baseDatas: { rawXml: string; questions: Question[] }[] = [];
 
-        const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+        for (let fIdx = 0; fIdx < fileBuffers.length; fIdx++) {
+            const buffer = fileBuffers[fIdx];
+            const rawXml = this.extractDocumentXml(buffer);
+            const domResult = this.parseXmlToDom(rawXml);
+            const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { questions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
 
-        if (errors.length > 0) {
-            return { success: false, errors };
+            if (errors.length > 0) {
+                allErrors.push(...errors.map(e => `[Đề gốc số ${fIdx + 1}] ${e}`));
+            } else {
+                baseDatas.push({ rawXml, questions });
+            }
+        }
+
+        if (allErrors.length > 0) {
+            return { success: false, errors: allErrors };
         }
 
         const allKeys: string[][] = [];
         let previewExamContent: any[] = [];
 
         for (let i = 0; i < numExams; i++) {
-            const mixedVariant = this.generateExamVariant(baseQuestions);
+            const baseIdx = i % baseDatas.length;
+            const mixedVariant = this.generateExamVariant(baseDatas[baseIdx].questions);
             const LETTERS = ['A', 'B', 'C', 'D'];
 
             const variantKeys = mixedVariant.map(q => {
@@ -400,16 +412,8 @@ export class DocxParserService {
             if (i === 0) {
                 previewExamContent = mixedVariant.map((q, idx) => {
                     const firstChar = q.answers?.[0]?.char;
-
-                    const isTF =
-                        typeof firstChar === 'string' &&
-                        firstChar >= 'a' &&
-                        firstChar <= 'z';
-
-                    const labels = isTF
-                        ? ['a', 'b', 'c', 'd']
-                        : ['A', 'B', 'C', 'D'];
-
+                    const isTF = typeof firstChar === 'string' && firstChar >= 'a' && firstChar <= 'z';
+                    const labels = isTF ? ['a', 'b', 'c', 'd'] : ['A', 'B', 'C', 'D'];
                     const sep = isTF ? ')' : '.';
 
                     return {
@@ -417,18 +421,13 @@ export class DocxParserService {
                         answers: q.answers.map((a, aIdx) =>
                             `${labels[aIdx]}${sep} ${a.text.replace(/^#?[A-Da-d][\.\)]\s*/i, '')}`
                         ),
-                        correctAnswer:
-                            labels[q.answers.findIndex(a => a.isCorrect)] || '?'
+                        correctAnswer: labels[q.answers.findIndex(a => a.isCorrect)] || '?'
                     };
                 });
             }
         }
 
-        return {
-            success: true,
-            matrix: allKeys,
-            previewExam: previewExamContent
-        };
+        return { success: true, matrix: allKeys, previewExam: previewExamContent };
     }
 
     private shuffleArray<T>(array: T[]): T[] {
@@ -668,8 +667,19 @@ export class DocxParserService {
         return zip.toBuffer();
     }
 
-    async generateMultipleExamsZip(fileBuffer: Buffer, numExams: number, startCode: number, startQuestion: number, headerInfo: HeaderInfo, archive: archiver.Archiver) {
-        const rawXml = this.extractDocumentXml(fileBuffer);
+    async generateMultipleExamsZip(fileBuffers: Buffer[], numExams: number, startCode: number, startQuestion: number, headerInfo: HeaderInfo, archive: archiver.Archiver) {
+        const baseDatas: { buffer: Buffer; rawXml: string }[] = [];
+
+        for (let fIdx = 0; fIdx < fileBuffers.length; fIdx++) {
+            const buffer = fileBuffers[fIdx];
+            const rawXml = this.extractDocumentXml(buffer);
+            const domResult = this.parseXmlToDom(rawXml);
+            const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+
+            if (errors.length > 0) throw new BadRequestException(`[Đề gốc số ${fIdx + 1}] có lỗi:\n` + errors.join('\n'));
+            baseDatas.push({ buffer, rawXml });
+        }
 
         const workbook = new ExcelJS.Workbook();
         const sheet = workbook.addWorksheet('Đáp Án');
@@ -684,13 +694,15 @@ export class DocxParserService {
 
         for (let i = 0; i < numExams; i++) {
             const currentCode = Number(startCode) + i;
-            const domResult = this.parseXmlToDom(rawXml);
+
+            const baseIdx = i % baseDatas.length;
+            const baseData = baseDatas[baseIdx];
+
+            const domResult = this.parseXmlToDom(baseData.rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
+            const { questions } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
 
-            const { questions: baseQuestions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
-            if (errors.length > 0) throw new BadRequestException('File đề thi có lỗi định dạng:\n' + errors.join('\n'));
-
-            const mixedVariant = this.generateExamVariant(baseQuestions);
+            const mixedVariant = this.generateExamVariant(questions);
 
             const LETTERS = ['A', 'B', 'C', 'D'];
             const variantKeys = mixedVariant.map(q => {
@@ -699,7 +711,7 @@ export class DocxParserService {
             });
             allKeys.push(variantKeys);
 
-            const buffer = this.buildFinalDocx(fileBuffer, domResult.docDom, classifiedLines, mixedVariant, startQuestion, currentCode, headerInfo);
+            const buffer = this.buildFinalDocx(baseData.buffer, domResult.docDom, classifiedLines, mixedVariant, startQuestion, currentCode, headerInfo);
             archive.append(buffer, { name: `Ma_de_${currentCode}.docx` });
         }
 
