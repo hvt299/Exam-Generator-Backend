@@ -365,10 +365,13 @@ export class DocxParserService {
         if (chars.length !== uniqueChars.size) {
             errors.push(`[${qTitle}] Có đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A).`);
         }
-        if (q.answers.length !== 4) {
+
+        const isPart3ShortAnswer = q.answers.length === 1 && chars[0].toUpperCase() === 'A';
+
+        if (!isPart3ShortAnswer && q.answers.length !== 4) {
             errors.push(`[${qTitle}] Tìm thấy ${q.answers.length} đáp án thay vì 4. Hãy kiểm tra lại ngắt dòng.`);
         }
-        if (!q.answers.some(a => a.isCorrect)) {
+        if (!isPart3ShortAnswer && !q.answers.some(a => a.isCorrect)) {
             errors.push(`[${qTitle}] Chưa đánh dấu đáp án đúng (cần bôi đỏ hoặc gạch chân).`);
         }
     }
@@ -404,6 +407,9 @@ export class DocxParserService {
             const LETTERS = ['A', 'B', 'C', 'D'];
 
             const variantKeys = mixedVariant.map(q => {
+                if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
+                    return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
             });
@@ -781,6 +787,9 @@ export class DocxParserService {
 
             const LETTERS = ['A', 'B', 'C', 'D'];
             const variantKeys = mixedVariant.map(q => {
+                if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
+                    return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
             });
