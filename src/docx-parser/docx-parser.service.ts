@@ -41,6 +41,14 @@ export interface Question {
     group: string;
 }
 
+export interface ErrorDetail {
+    file: string;
+    location: string;
+    type: string;
+    message: string;
+    suggestion: string;
+}
+
 export interface HeaderInfo {
     useHeader: boolean;
     useFooter: boolean;
@@ -224,9 +232,9 @@ export class DocxParserService {
         return correctIndices;
     }
 
-    buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any): { questions: Question[], errors: string[] } {
+    buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any, fileName: string = 'Đề gốc'): { questions: Question[], errors: ErrorDetail[] } {
         const questions: Question[] = [];
-        const errors: string[] = [];
+        const errors: ErrorDetail[] = [];
         let currentGroup = '<g3#1>';
         let currentQuestion: Question | null = null;
 
@@ -238,7 +246,7 @@ export class DocxParserService {
             }
             else if (line.type === LineType.QUESTION) {
                 if (currentQuestion) {
-                    this.validateQuestion(currentQuestion, errors);
+                    this.validateQuestion(currentQuestion, errors, fileName);
                     questions.push(currentQuestion);
                 }
                 currentQuestion = {
@@ -250,7 +258,7 @@ export class DocxParserService {
             }
             else if (line.type === LineType.ANSWER_MCQ || line.type === LineType.ANSWER_TF) {
                 if (!currentQuestion) {
-                    errors.push(`[Lỗi cấu trúc] Tìm thấy đáp án nhưng không có câu hỏi ở trên: "${line.text.trim()}"`);
+                    errors.push({ file: fileName, location: line.text.substring(0, 30), type: 'ORPHAN_ANSWER', message: 'Tìm thấy đáp án nhưng không có câu hỏi ở trên.', suggestion: 'Đảm bảo trước các đáp án A. B. C. D. phải có từ khóa "Câu X:" hoặc "Question X:".' });
                     continue;
                 }
 
@@ -285,7 +293,7 @@ export class DocxParserService {
             }
         }
         if (currentQuestion) {
-            this.validateQuestion(currentQuestion, errors);
+            this.validateQuestion(currentQuestion, errors, fileName);
             questions.push(currentQuestion);
         }
         return { questions, errors };
@@ -356,28 +364,30 @@ export class DocxParserService {
         }
     }
 
-    private validateQuestion(q: Question, errors: string[]) {
+    private validateQuestion(q: Question, errors: ErrorDetail[], fileName: string) {
         if (q.answers.length === 0) return;
         const chars = q.answers.map(a => a.char);
         const uniqueChars = new Set(chars);
-        const qTitle = q.questionText.split('\n')[0].substring(0, 40) + '...';
+        const qTitle = q.questionText.split('\n')[0].substring(0, 50) + '...';
 
         if (chars.length !== uniqueChars.size) {
-            errors.push(`[${qTitle}] Có đáp án bị trùng lặp ký tự (ví dụ gõ 2 lần chữ A).`);
+            errors.push({ file: fileName, location: qTitle, type: 'DUPLICATE_CHAR', message: 'Có đáp án bị trùng lặp ký tự.', suggestion: 'Vui lòng kiểm tra lại, có thể bạn đã gõ 2 lần cùng một ký tự (ví dụ 2 chữ A).' });
         }
 
         const isPart3ShortAnswer = q.answers.length === 1 && chars[0].toUpperCase() === 'A';
+        const isPart2TF = q.answers.length > 0 && chars[0] >= 'a' && chars[0] <= 'z';
 
         if (!isPart3ShortAnswer && q.answers.length !== 4) {
-            errors.push(`[${qTitle}] Tìm thấy ${q.answers.length} đáp án thay vì 4. Hãy kiểm tra lại ngắt dòng.`);
+            errors.push({ file: fileName, location: qTitle, type: 'MISSING_ANSWER', message: `Tìm thấy ${q.answers.length} đáp án thay vì 4.`, suggestion: 'Tuyệt đối không dùng phím Enter để ngắt dòng bên trong một đáp án. Đảm bảo có đủ 4 đáp án.' });
         }
-        if (!isPart3ShortAnswer && !q.answers.some(a => a.isCorrect)) {
-            errors.push(`[${qTitle}] Chưa đánh dấu đáp án đúng (cần bôi đỏ hoặc gạch chân).`);
+
+        if (!isPart3ShortAnswer && !isPart2TF && !q.answers.some(a => a.isCorrect)) {
+            errors.push({ file: fileName, location: qTitle, type: 'NO_CORRECT_ANSWER', message: 'Chưa đánh dấu đáp án đúng.', suggestion: 'Bôi đen đáp án đúng và đổi màu chữ thành Đỏ/Xanh, hoặc nhấn Ctrl+U để gạch chân.' });
         }
     }
 
     async previewExams(fileBuffers: Buffer[], numExams: number, startCode: number, startQuestion: number) {
-        const allErrors: string[] = [];
+        const allErrors: ErrorDetail[] = [];
         const baseDatas: { rawXml: string; questions: Question[] }[] = [];
 
         for (let fIdx = 0; fIdx < fileBuffers.length; fIdx++) {
@@ -385,10 +395,11 @@ export class DocxParserService {
             const rawXml = this.extractDocumentXml(buffer);
             const domResult = this.parseXmlToDom(rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
-            const { questions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+            const fileName = `Đề gốc số ${fIdx + 1}`;
+            const { questions, errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom, fileName);
 
             if (errors.length > 0) {
-                allErrors.push(...errors.map(e => `[Đề gốc số ${fIdx + 1}] ${e}`));
+                allErrors.push(...errors);
             } else {
                 baseDatas.push({ rawXml, questions });
             }
@@ -409,6 +420,9 @@ export class DocxParserService {
             const variantKeys = mixedVariant.map(q => {
                 if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
                     return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
+                if (q.answers.length === 4 && q.answers[0].char >= 'a' && q.answers[0].char <= 'z') {
+                    return q.answers.map(a => a.isCorrect ? 'Đ' : 'S').join('');
                 }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
@@ -756,9 +770,10 @@ export class DocxParserService {
             const rawXml = this.extractDocumentXml(buffer);
             const domResult = this.parseXmlToDom(rawXml);
             const classifiedLines = this.classifyParagraphs(domResult.paragraphs);
-            const { errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom);
+            const fileName = `Đề gốc số ${fIdx + 1}`;
+            const { errors } = this.buildQuestionBlocks(classifiedLines, domResult.docDom, fileName);
 
-            if (errors.length > 0) throw new BadRequestException(`[Đề gốc số ${fIdx + 1}] có lỗi:\n` + errors.join('\n'));
+            if (errors.length > 0) throw new BadRequestException(errors.map(e => `[${e.file}] ${e.location}: ${e.message}`).join('\n'));
             baseDatas.push({ buffer, rawXml });
         }
 
@@ -789,6 +804,9 @@ export class DocxParserService {
             const variantKeys = mixedVariant.map(q => {
                 if (q.answers.length === 1 && q.answers[0].char.toUpperCase() === 'A') {
                     return q.answers[0].text.replace(/^#?[A-Da-d][\.\)]\s*/i, '').trim();
+                }
+                if (q.answers.length === 4 && q.answers[0].char >= 'a' && q.answers[0].char <= 'z') {
+                    return q.answers.map(a => a.isCorrect ? 'Đ' : 'S').join('');
                 }
                 const correctIndex = q.answers.findIndex(a => a.isCorrect);
                 return correctIndex !== -1 ? LETTERS[correctIndex] : '?';
