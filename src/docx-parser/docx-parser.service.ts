@@ -232,6 +232,60 @@ export class DocxParserService {
         return correctIndices;
     }
 
+    splitAnswerParts(lineText: string, isTF: boolean): string[] {
+        const trimmed = lineText.trim();
+        if (!trimmed) return [];
+
+        const mcqOrder = ['A', 'B', 'C', 'D'];
+        const tfOrder = ['a', 'b', 'c', 'd'];
+        const order = isTF ? tfOrder : mcqOrder;
+
+        const startRegex = isTF ? /^\s*#?([a-d])\)/i : /^\s*#?([A-D])\./i;
+        const startMatch = lineText.match(startRegex);
+        if (!startMatch) return [lineText];
+
+        const firstChar = isTF ? startMatch[1].toLowerCase() : startMatch[1].toUpperCase();
+        const firstCharIdx = order.indexOf(firstChar);
+        if (firstCharIdx === -1 || firstCharIdx === order.length - 1) return [lineText];
+
+        const splitIndices: number[] = [0];
+        let searchFrom = startMatch[0].length;
+        let nextCharIdx = firstCharIdx + 1;
+
+        while (nextCharIdx < order.length) {
+            const nextChar = order[nextCharIdx];
+            const delimiter = isTF ? '\\)' : '\\.';
+            // KẾT HỢP CÁCH CŨ VÀ CÁCH MỚI:
+            // - Nhánh 1: Có khoảng trắng (tab, dấu cách) phân cách: [\t\s\u00A0]+
+            // - Nhánh 2: Không có khoảng trắng (do dính liền hoặc bị XML nuốt Tab): bắt buộc ký tự liền trước phải là dấu câu kết thúc (như dấu chấm, chấm phẩy, đóng ngoặc) và KHÔNG ĐƯỢC là chữ cái, số, gạch nối, ký hiệu độ: (?<=[^a-zA-Z0-9\-_#°])
+            // - Cả 2 nhánh đều chỉ tìm kiếm đúng ký tự nhãn tiếp theo theo thứ tự đề thi (#?${nextChar}${delimiter})
+            const answerRegex = new RegExp(`(?:[\\t\\s\\u00A0]+|(?<=[^a-zA-Z0-9\\-_#°]))(#?${nextChar}${delimiter})`, 'i');
+
+            const subStr = lineText.substring(searchFrom);
+            const match = subStr.match(answerRegex);
+            if (match && match.index !== undefined) {
+                const leadingWsLen = match[0].indexOf(match[1]);
+                const actualAnswerStart = searchFrom + match.index + (leadingWsLen !== -1 ? leadingWsLen : 0);
+                splitIndices.push(actualAnswerStart);
+                searchFrom = actualAnswerStart + match[1].length;
+                nextCharIdx++;
+            } else {
+                nextCharIdx++;
+            }
+        }
+
+        if (splitIndices.length === 1) return [lineText];
+
+        const parts: string[] = [];
+        for (let i = 0; i < splitIndices.length; i++) {
+            const start = splitIndices[i];
+            const end = i + 1 < splitIndices.length ? splitIndices[i + 1] : lineText.length;
+            const part = lineText.substring(start, end).trim();
+            if (part.length > 0) parts.push(part);
+        }
+        return parts;
+    }
+
     buildQuestionBlocks(classifiedLines: ClassifiedLine[], docDom: any, fileName: string = 'Đề gốc'): { questions: Question[], errors: ErrorDetail[] } {
         const questions: Question[] = [];
         const errors: ErrorDetail[] = [];
@@ -263,11 +317,7 @@ export class DocxParserService {
                 }
 
                 const isTF = line.type === LineType.ANSWER_TF;
-                const regex = isTF
-                    ? /(?=\s*#[a-d]\)|\s*(?<!#)[a-d]\))/
-                    : /(?=\s*#[A-D]\.|\s*(?<!#)[A-D]\.)/;
-
-                const answerParts = line.text.split(regex).filter(p => p.trim().length > 0);
+                const answerParts = this.splitAnswerParts(line.text, isTF);
                 const correctIndices = this.getCorrectAnswerIndices(line.node, answerParts);
 
                 for (let j = 0; j < answerParts.length; j++) {
