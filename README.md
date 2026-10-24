@@ -1,6 +1,6 @@
 <div align="center">
 
-  <h1>⚙️ ExamGen PRO - Core Processing Engine & API Service</h1>
+  <h1>ExamGen PRO - Core Processing Engine & API Service</h1>
   <h3>Hệ thống Xử lý Phân tích Cú pháp XML & Hoán vị Đề thi Chuẩn Bộ GD&ĐT 2025</h3>
 
   <p>
@@ -10,9 +10,9 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/NestJS-11.0.1-E0234E?logo=nestjs" alt="NestJS">
+    <img src="https://img.shields.io/badge/NestJS-11.1.21-E0234E?logo=nestjs" alt="NestJS">
     <img src="https://img.shields.io/badge/TypeScript-5.7.3-3178C6?logo=typescript" alt="TypeScript">
-    <img src="https://img.shields.io/badge/Express-5.0.0-black?logo=express" alt="Express">
+    <img src="https://img.shields.io/badge/Express-5.2.1-black?logo=express" alt="Express">
     <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License">
     <img src="https://img.shields.io/badge/status-Active_Development-success" alt="Status">
   </p>
@@ -21,17 +21,47 @@
 
 <br />
 
-# ⚙️ BACKEND API SERVICE & XML PARSING CORE
+# BACKEND API SERVICE & XML PARSING CORE
 
 Đây là Repository chứa mã nguồn **Backend** của hệ thống **ExamGen PRO**, đóng vai trò là hạt nhân thuật toán chịu trách nhiệm bóc tách, tái cấu trúc văn bản XML, quản lý logic hoán vị và xuất bản tài liệu thi cử chuẩn mực.
 
 ---
 
-## 🛠️ Công nghệ & Phiên bản
+## Mục lục
+
+- [1. Công nghệ & Phiên bản](#1-công-nghệ--phiên-bản)
+  - [Core Stack](#core-stack)
+  - [OpenXML & Tài liệu Xử lý Chuyên sâu](#openxml--tài-liệu-xử-lý-chuyên-sâu)
+  - [Chất lượng Mã nguồn & Kiểm thử (Testing)](#chất-lượng-mã-nguồn--kiểm-thử-testing)
+- [2. Tính năng Nghiệp vụ & Thuật toán Cốt lõi](#2-tính-năng-nghiệp-vụ--thuật-toán-cốt-lõi)
+  - [2.1. Trích xuất Cú pháp OpenXML Sâu](#21-trích-xuất-cú-pháp-openxml-sâu)
+  - [2.2. Hỗ trợ Chuẩn Cấu trúc Đề thi Mới (Bộ GD&ĐT 2025)](#22-hỗ-trợ-chuẩn-cấu-trúc-đề-thi-mới-bộ-gdđt-2025)
+  - [2.3. Nhận diện Đáp án Đúng Đa Phương Thức](#23-nhận-diện-đáp-án-đúng-đa-phương-thức)
+  - [2.4. Thuật toán Tách Đáp án Cùng Dòng Thông Minh (splitAnswerParts)](#24-thuật-toán-tách-đáp-án-cùng-dòng-thông-minh-splitanswerparts)
+  - [2.5. Shuffler Engine & Kiểm soát Hoán vị](#25-shuffler-engine--kiểm-soát-hoán-vị)
+  - [2.6. Cơ chế Phân phối Round-Robin Nhiều Đề Gốc](#26-cơ-chế-phân-phối-round-robin-nhiều-đề-gốc)
+  - [2.7. Dàn Trang Tự Động Smart Layout 4-2-1](#27-dàn-trang-tự-động-smart-layout-4-2-1)
+  - [2.8. Xuất Ma Trận Excel Tự Động & Tiêu Đề Tàng Hình](#28-xuất-ma-trận-excel-tự-động--tiêu-đề-tàng-hình)
+- [3. Danh sách API Endpoints](#3-danh-sách-api-endpoints)
+  - [3.1. Xem trước ma trận & Kiểm tra lỗi định dạng](#31-xem-trước-ma-trận--kiểm-tra-lỗi-định-dạng)
+  - [3.2. Trộn đề thi và Xuất file nén ZIP](#32-trộn-đề-thi-và-xuất-file-nén-zip)
+- [4. Cài đặt & Khởi chạy](#4-cài-đặt--khởi-chạy)
+  - [4.1. Yêu cầu hệ thống (Prerequisites)](#41-yêu-cầu-hệ-thống-prerequisites)
+  - [4.2. Clone Repository & Cài đặt Dependencies](#42-clone-repository--cài-đặt-dependencies)
+  - [4.3. Cấu hình biến môi trường (.env)](#43-cấu-hình-biến-môi-trường-env)
+  - [4.4. Các lệnh thực thi (NPM Scripts)](#44-các-lệnh-thực-thi-npm-scripts)
+  - [4.5. Chạy Kiểm thử Tự động (Testing)](#45-chạy-kiểm-thử-tự-động-testing)
+- [5. Cấu trúc Thư mục Dự án](#5-cấu-trúc-thư-mục-dự-án)
+- [6. Kết nối Frontend Dashboard](#6-kết-nối-frontend-dashboard)
+- [7. Tác giả](#7-tác-giả)
+
+---
+
+## 1. Công nghệ & Phiên bản
 
 Dựa trên cấu hình `package.json` của dự án:
 
-### 🏗️ Core Stack
+### Core Stack
 
 | Công nghệ | Phiên bản | Vai trò |
 | :--- | :--- | :--- |
@@ -39,22 +69,22 @@ Dựa trên cấu hình `package.json` của dự án:
 | **[TypeScript](https://www.typescriptlang.org/)** | `^5.7.3` | Ngôn ngữ lập trình chính, hỗ trợ Type Safety toàn diện |
 | **[@nestjs/platform-express](https://expressjs.com/)** | `^11.0.1` | Adapter HTTP nền tảng Express cho NestJS |
 | **[@nestjs/config](https://docs.nestjs.com/techniques/configuration)** | `^4.0.3` | Quản lý cấu hình biến môi trường (`.env`) |
-| **[Multer](https://github.com/expressjs/multer)** | `^2.0.0` | Middleware nhận diện và nạp tệp đa phần (multipart/form-data) trực tiếp vào RAM |
+| **[Multer](https://github.com/expressjs/multer)** | `^2.5.0` | Middleware nhận diện và nạp tệp đa phần (multipart/form-data) trực tiếp vào RAM |
 
 ---
 
-### 📄 OpenXML & Tài liệu Xử lý Chuyên sâu
+### OpenXML & Tài liệu Xử lý Chuyên sâu
 
 | Thư viện | Phiên bản | Vai trò |
 | :--- | :--- | :--- |
-| **[@xmldom/xmldom](https://github.com/xmldom/xmldom)** | `^0.8.11` | Phân tích và thao tác cây DOM XML (`word/document.xml`) thuần bộ nhớ |
-| **[adm-zip](https://github.com/cthackers/adm-zip)** | `^0.5.16` | Giải nén và biên soạn lại cấu trúc gói lưu trữ file Word `.docx` gốc |
+| **[@xmldom/xmldom](https://github.com/xmldom/xmldom)** | `^0.8.15` | Phân tích và thao tác cây DOM XML (`word/document.xml`) thuần bộ nhớ |
+| **[adm-zip](https://github.com/cthackers/adm-zip)** | `^0.6.1` | Giải nén và biên soạn lại cấu trúc gói lưu trữ file Word `.docx` gốc |
 | **[archiver](https://github.com/archiverjs/node-archiver)** | `^7.0.1` | Đóng gói luồng nén file ZIP `application/zip` (level 9) trả về trực tiếp qua Stream |
 | **[exceljs](https://github.com/exceljs/exceljs)** | `^4.4.0` | Khởi tạo bảng tính Excel ma trận đáp án `.xlsx` định dạng chuyên nghiệp |
 
 ---
 
-### 🧪 Chất lượng Mã nguồn & Kiểm thử (Testing)
+### Chất lượng Mã nguồn & Kiểm thử (Testing)
 
 | Thư viện | Phiên bản | Vai trò |
 | :--- | :--- | :--- |
@@ -65,26 +95,26 @@ Dựa trên cấu hình `package.json` của dự án:
 
 ---
 
-## 🌟 Tính năng Nghiệp vụ & Thuật toán Cốt lõi
+## 2. Tính năng Nghiệp vụ & Thuật toán Cốt lõi
 
-### 1️⃣ Trích xuất Cú pháp OpenXML Sâu
+### 2.1. Trích xuất Cú pháp OpenXML Sâu
 * Phân tích trực tiếp các thẻ đoạn văn `<w:p>`, thẻ run `<w:r>`, thẻ văn bản `<w:t>` và thuộc tính màu sắc `<w:color>`, gạch chân `<w:u>`.
 * **Bảo toàn 100% công thức Toán & Hình vẽ:** Giữ nguyên các node công thức MathType/OMML (`<m:oMath>`), biểu thức khoa học và đối tượng hình ảnh vẽ đồ thị (`<w:drawing>`).
 
-### 2️⃣ Hỗ trợ Chuẩn Cấu trúc Đề thi Mới (Bộ GD&ĐT 2025)
+### 2.2. Hỗ trợ Chuẩn Cấu trúc Đề thi Mới (Bộ GD&ĐT 2025)
 * **Phần I (Trắc nghiệm nhiều lựa chọn):** Nhận diện từ khóa `Câu X.` hoặc `Question X:`, phân tích 4 phương án `A. B. C. D.` (kèm dấu chấm).
 * **Phần II (Trắc nghiệm Đúng/Sai):** Tự động bóc tách 4 nhận định con `a) b) c) d)` dưới mỗi câu hỏi.
 * **Phần III (Trả lời ngắn / Tự luận điền số):** Tự động trích xuất đáp án duy nhất đứng sau tiền tố `A.`.
 
-### 3️⃣ Nhận diện Đáp án Đúng Đa Phương Thức
+### 2.3. Nhận diện Đáp án Đúng Đa Phương Thức
 * Nhận diện qua mã màu chữ: **Đỏ** (`#FF0000`, `#C00000`), **Xanh lá cây** (`#00B050`, `#008000`), **Xanh dương** (`#0000FF`, `#0070C0`).
 * Nhận diện qua thuộc tính gạch chân (Underline `Ctrl + U`).
 
-### 4️⃣ Thuật toán Tách Đáp án Cùng Dòng Thông Minh (`splitAnswerParts`)
+### 2.4. Thuật toán Tách Đáp án Cùng Dòng Thông Minh (`splitAnswerParts`)
 * Phân tách chính xác các đáp án nằm trên cùng 1 dòng văn bản (ngăn cách bằng phím Tab hoặc khoảng trắng).
 * Khắc phục triệt để lỗi đáp án có đuôi vô tình trùng chữ cái đầu (ví dụ: các hợp chất sinh học `3-PGA.`, `RuBP.`, `OAA.`), đảm bảo không cắt nhầm nội dung phương án.
 
-### 5️⃣ Shuffler Engine & Kiểm soát Hoán vị
+### 2.5. Shuffler Engine & Kiểm soát Hoán vị
 * Thuật toán tráo đổi Fisher-Yates khoa học, cân đối vị trí xuất hiện của các phương án.
 * **Thẻ điều khiển nhóm `<gX>`:**
   * `<g3>`: Trộn toàn bộ câu hỏi và đáp án (Mặc định).
@@ -93,28 +123,28 @@ Dựa trên cấu hình `package.json` của dự án:
   * `<g0>`: Đóng băng hoàn toàn (Dành cho bài nghe Audio).
 * **Tính năng Ghim cố định `#`:** Đặt ký hiệu `#` trước chữ cái đáp án (ví dụ `#D. Cả A và B đều đúng`) để đáp án này luôn cố định ở vị trí ban đầu.
 
-### 6️⃣ Cơ chế Phân phối Round-Robin Nhiều Đề Gốc
+### 2.6. Cơ chế Phân phối Round-Robin Nhiều Đề Gốc
 * Cho phép upload đồng thời nhiều file đề thi Word khác nhau.
 * Tự động chia đều số lượng đề con cần trộn cho từng nguồn đề gốc, hạn chế trùng lặp đề thi trong phòng thi.
 
-### 7️⃣ Dàn Trang Tự Động Smart Layout 4-2-1
+### 2.7. Dàn Trang Tự Động Smart Layout 4-2-1
 * Tự động tính toán độ dài phương án trả lời để chèn điểm dừng Tab Stop chuẩn:
   * Phương án ngắn: Xếp **4 đáp án / 1 dòng**.
   * Phương án vừa: Xếp **2 đáp án / 1 dòng**.
   * Phương án dài: Xếp **1 đáp án / 1 dòng**.
 * Giúp văn bản thẳng hàng, thẩm mỹ và tiết kiệm đến 40% chi phí giấy in.
 
-### 8️⃣ Xuất Ma Trận Excel Tự Động & Tiêu Đề Tàng Hình
+### 2.8. Xuất Ma Trận Excel Tự Động & Tiêu Đề Tàng Hình
 * Khởi tạo file Excel `.xlsx` đối chiếu ma trận đáp án giữa các mã đề, tương thích với máy quét và các ứng dụng chấm trắc nghiệm.
 * Tự động chèn bảng tiêu đề Sở GD / Trường học 2 cột với đường viền vô hình chuẩn quy cách Bộ Giáo Dục.
 
 ---
 
-## 📚 Danh sách API Endpoints
+## 3. Danh sách API Endpoints
 
 Tất cả các route được quản trị theo tiền tố `/api/v1/exams`:
 
-### 1. Xem trước ma trận & Kiểm tra lỗi định dạng
+### 3.1. Xem trước ma trận & Kiểm tra lỗi định dạng
 * **Method:** `POST`
 * **URL:** `/api/v1/exams/preview`
 * **Content-Type:** `multipart/form-data`
@@ -139,7 +169,7 @@ Tất cả các route được quản trị theo tiền tố `/api/v1/exams`:
   ```
   *(Trường hợp phát hiện lỗi định dạng: trả về `success: false` kèm mảng `errors` chi tiết từng câu và hướng dẫn khắc phục).*
 
-### 2. Trộn đề thi và Xuất file nén ZIP
+### 3.2. Trộn đề thi và Xuất file nén ZIP
 * **Method:** `POST`
 * **URL:** `/api/v1/exams/mix-multi`
 * **Content-Type:** `multipart/form-data`
@@ -156,14 +186,14 @@ Tất cả các route được quản trị theo tiền tố `/api/v1/exams`:
 
 ---
 
-## 🚀 Cài đặt & Khởi chạy
+## 4. Cài đặt & Khởi chạy
 
-### 1️⃣ Yêu cầu hệ thống (Prerequisites)
+### 4.1. Yêu cầu hệ thống (Prerequisites)
 
 * **Node.js:** `>= 20.0.0` (Khuyến nghị **Node.js 20.x** hoặc **22.x LTS**)
 * **Package Manager:** `npm` (>= 9), `yarn` hoặc `pnpm`
 
-### 2️⃣ Clone Repository & Cài đặt Dependencies
+### 4.2. Clone Repository & Cài đặt Dependencies
 
 ```bash
 git clone https://github.com/hvt299/Exam-Generator-Backend.git
@@ -171,7 +201,7 @@ cd Exam-Generator-Backend
 npm install
 ```
 
-### 3️⃣ Cấu hình biến môi trường (.env)
+### 4.3. Cấu hình biến môi trường (.env)
 
 Tạo file `.env` tại thư mục gốc:
 
@@ -179,7 +209,7 @@ Tạo file `.env` tại thư mục gốc:
 PORT=3001
 ```
 
-### 4️⃣ Các lệnh thực thi (NPM Scripts)
+### 4.4. Các lệnh thực thi (NPM Scripts)
 
 ```bash
 # Khởi chạy môi trường phát triển (Watch mode - Hot reload)
@@ -192,7 +222,7 @@ npm run build
 npm run start:prod
 ```
 
-### 5️⃣ Chạy Kiểm thử Tự động (Testing)
+### 4.5. Chạy Kiểm thử Tự động (Testing)
 
 ```bash
 # Chạy bộ Unit Tests
@@ -207,7 +237,7 @@ npm run test:cov
 
 ---
 
-## 📂 Cấu trúc Thư mục Dự án
+## 5. Cấu trúc Thư mục Dự án
 
 ```text
 Exam-Generator-Backend/
@@ -231,7 +261,7 @@ Exam-Generator-Backend/
 
 ---
 
-## 🔗 Kết nối Frontend Dashboard
+## 6. Kết nối Frontend Dashboard
 
 API Service này được thiết kế để kết nối trực tiếp với **ExamGen PRO Frontend Web** (chạy tại cổng `3000`):
 * Cấu hình CORS đã được mở mặc định trong `src/main.ts` (`app.enableCors()`).
@@ -239,7 +269,7 @@ API Service này được thiết kế để kết nối trực tiếp với **E
 
 ---
 
-## 👨‍💻 Tác giả
+## 7. Tác giả
 
 Phát triển bởi **Mr.T (hvt299)**  
 GitHub: [https://github.com/hvt299](https://github.com/hvt299)
