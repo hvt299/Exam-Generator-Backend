@@ -10,10 +10,12 @@
   </p>
 
   <p>
-    <img src="https://img.shields.io/badge/NestJS-11.1.21-E0234E?logo=nestjs" alt="NestJS">
-    <img src="https://img.shields.io/badge/TypeScript-5.7.3-3178C6?logo=typescript" alt="TypeScript">
-    <img src="https://img.shields.io/badge/Express-5.2.1-black?logo=express" alt="Express">
-    <img src="https://img.shields.io/badge/license-UNLICENSED-red" alt="License">
+    <img src="https://img.shields.io/badge/NestJS-11.1.21-E0234E?logo=nestjs&logoColor=white" alt="NestJS">
+    <img src="https://img.shields.io/badge/TypeScript-5.7.3-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+    <img src="https://img.shields.io/badge/Express-5.2.1-black?logo=express&logoColor=white" alt="Express">
+    <img src="https://img.shields.io/badge/OpenXML-DOCX_Parser-2B579A?logo=microsoftword&logoColor=white" alt="OpenXML">
+    <img src="https://img.shields.io/badge/ExcelJS-4.4.0-217346?logo=microsoftexcel&logoColor=white" alt="ExcelJS">
+    <img src="https://img.shields.io/badge/Jest-Testing_v30-C21325?logo=jest&logoColor=white" alt="Jest">
     <img src="https://img.shields.io/badge/status-Active_Development-success" alt="Status">
   </p>
 
